@@ -15,33 +15,42 @@
 from os.path import abspath, dirname, join
 import sys
 
-sys.path.append('..')
+sys.path.append(abspath('.'))
 import src
 
 
 # ------------------------------------------------------------------------------
 # PARAMETERS
 # ------------------------------------------------------------------------------
+folder_shore = 'shoreline'
+url_shore = 'https://coast.noaa.gov/htdata/Shoreline/us_medium_shoreline.zip'
+
+folder_tss = 'tss'
+url_tss = 'http://encdirect.noaa.gov/theme_layers/data/shipping_lanes/shippinglanes.zip'
+
 city = 'seattle'
-year = '2017'
+year = '2017' 
+projection = "+proj=utm +zone=10 +ellps=WGS84 +datum=WGS84 +units=m +no_defs"
+epsg = '32610'
 months = ['{:02d}'.format(m) for m in range(1,2)]
+
 
 
 # ------------------------------------------------------------------------------
 # DOWNLOAD DATA
 # ------------------------------------------------------------------------------
-shore = src.Shoreline_Download()
+# Download a shapefile representation of the United States shoreline
+# and save it to the data directory.
+shore = src.Shapefile_Download(folder_shore, url_shore)
 shore.download()
 
-tss = src.TSS_Download()
+# Download a shapefile representation of the US Traffic Separation Scheme
+# and save it to the data directory.
+tss = src.Shapefile_Download(folder_tss, url_tss)
 tss.download()
 
-nais = src.NAIS_Download(city, year)
-for month in months:
-    nais.download(month)
-    try:
-        nais.clean_raw(month)
-    except IOError:
-        # File has already been cleaned
-        continue
-nais.clean_up()
+nais = src.NAIS_Download(city, year, epsg)
+# for month in months:
+#     nais.download(month)
+#     nais.clean_raw()
+# nais.clean_up()
