@@ -128,12 +128,3 @@ class NAIS_Download(object):
             self.raw_basic.clean_raw()
         except IOError:
             pass
-        # Add step calculations and clean suscpicious data
-        try:
-            self.raw_advanced = src.dataframe.Advanced_Clean(
-                self.csv_processed, 
-                self.projection
-            )
-            self.raw_advanced.clean_raw()
-        except:
-            pass

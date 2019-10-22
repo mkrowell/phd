@@ -14,36 +14,26 @@
 # ------------------------------------------------------------------------------
 import angles
 import datetime
-import geopandas
-import matplotlib.pyplot as plt
-from matplotlib.collections import LineCollection
-from matplotlib.colors import ListedColormap, BoundaryNorm
+# import geopandas as gpd
+# import matplotlib.pyplot as plt
+# from matplotlib.collections import LineCollection
+# from matplotlib.colors import ListedColormap, BoundaryNorm
 import numpy as np
 import os
-from os.path import basename, dirname, exists, join
+from os.path import abspath, basename, dirname, exists, join
 import pandas as pd
-from pandas.plotting import register_matplotlib_converters
-import seaborn as sns
+# from pandas.plotting import register_matplotlib_converters
 from shapely.geometry import Point
 import yaml
 
 import src
 from src import print_reduction, time_all
 
-# sns.set_palette("Set1")
-# sns.set_context("paper", font_scale=3)
-sns.axes_style("darkgrid")
-
-register_matplotlib_converters()
-plt.rcParams.update({'font.size': 6})
 
 
-# -----------------------------------------------------------------------------
-# CONSTANTS
-# ----------------------------------------------------------------------------- 
-METERS_IN_NM = 1852
-EARTH_RADIUS_KM = 6371
-DIRECTORY_PLOTS = 'D:\\Maura\\Plots\\2017'
+# register_matplotlib_converters()
+# plt.rcParams.update({'font.size': 6})
+
 
 
 # -----------------------------------------------------------------------------
@@ -70,17 +60,20 @@ class Basic_Clean(object):
 
         # Buffer on area of interest - location specific
         self.offset = 0.0254
-        self.proj = "+proj=utm +zone=10 +ellps=WGS84 +datum=WGS84 +units=m +no_defs"
-
-        # Create raw NAIS dataframe if the file exists
-        self.df = pd.read_csv(self.csv, dtype={'IMO': str, 'CallSign': str})
-
+        
+        # Create raw NAIS dataframe, define ambiguous types
+        data_dict = {
+            'VesselName': str,
+            'IMO': str,
+            'CallSign': str,
+            'Status': 'category', 
+        }
+        self.df = pd.read_csv(self.csv, dtype=data_dict)
         self.df['BaseDateTime'] = pd.to_datetime(self.df['BaseDateTime'])
-
-        # Categorize status
+        
+        # Standardize missing values
         self.df['Status'].replace(np.nan, "undefined", inplace=True)
-        self.df['Status'] = self.df['Status'].astype('category')
-
+        self.df['Heading'].replace(511, np.nan, inplace=True)
         self.required = ['MMSI', 'BaseDateTime', 'LAT', 'LON', 'SOG', 'COG']
 
 
@@ -104,12 +97,13 @@ class Basic_Clean(object):
         self.drop_sparse_mmsi()
         # Standardize data and sort
         self.map_vessel_types()
-        self.normalize_cog()
+        self.normalize_angles()
+        self.drop_columns()
         self.df.sort_values(['MMSI', 'BaseDateTime'], inplace=True)
         # Write out to procesed and delete raw
-        self.df.to_csv(self.processed)
-        os.remove(self.csv)
-
+        self.df.to_csv(self.processed, index=False)
+        # os.remove(self.csv)
+        
 
     # DATAFRAME CLEANING -------------------------------------------------------
     @print_reduction
@@ -190,18 +184,29 @@ class Basic_Clean(object):
             lambda g: len(g)>self.minPoints
         )
 
-    def normalize_cog(self):
+    def normalize_angles(self):
         '''
         Normalize COG to an angle between [0, 360).
         '''
         self.df['COG'] = self.df['COG'].apply(
             lambda x: angles.normalize(x, 0, 360)
         )
+        self.df['Heading'] = self.df['Heading'].apply(
+            lambda x: angles.normalize(x, 0, 360)
+        )
+
+    def drop_columns(self):
+        '''
+        Remove unneccessary columns.
+        '''
+        unused = ['CallSign', 'IMO', 'Cargo', 'Width', 'Draft']
+        self.df.drop(columns=unused, inplace=True)
 
     def map_vessel_types(self):
         '''
         Map codes to categories.
         '''
+        type_dict = abspath(join(dirname(__file__), 'vessel_types.yaml'))
         with open("src\\vessel_types.yaml", 'r') as stream:
             v_map = yaml.safe_load(stream)
 
@@ -210,6 +215,34 @@ class Basic_Clean(object):
         self.df['VesselType'] = self.df['VesselType'].astype('category')
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# ------------------------------------------------------------------------------
+# NOT USED
+# ------------------------------------------------------------------------------
+
+# -----------------------------------------------------------------------------
+# CONSTANTS
+# ----------------------------------------------------------------------------- 
+# METERS_IN_NM = 1852
+# EARTH_RADIUS_KM = 6371
+
 @time_all
 class Advanced_Clean(object):
 
@@ -217,28 +250,43 @@ class Advanced_Clean(object):
     Identify suspicious data in the cleaned file.
     '''
 
-    def __init__(self, csvFile):
+    def __init__(self, csvFile, projection):
         '''Process nais dataframe.'''
         self.csv = csvFile
+        self.crs_0 = {'init': 'epsg:4326'}
+        self.crs_1 = projection
 
-        # Buffer on area of interest - location specific
-        self.proj = "+proj=utm +zone=10 +ellps=WGS84 +datum=WGS84 +units=m +no_defs"
-
-        # Create raw NAIS dataframe if the file exists
-        self.df = pd.read_csv(self.csv, dtype={'CallSign': str})
-
+        # Create geodataframe
+        self.df = pd.read_csv(self.csv)
         geometry = [Point(xy) for xy in zip(self.df['LON'], self.df['LAT'])]
-        crs = {'init': 'epsg:4326'}
-        self.gdf = geopandas.GeoDataFrame(self.df, crs=crs, geometry=geometry)
+        
+        self.gdf = gpd.GeoDataFrame(self.df, crs=self.crs_0, geometry=geometry)
+
+    @property
+    def grouped_mmsi(self):
+
+        '''Return sorted dataframe grouped by MMSI.'''
+        return self.gdf.sort_values(['MMSI', 'BaseDateTime']).groupby('MMSI')
+
+    # MAIN FUNCTION ------------------------------------------------------------
+    def clean_raw(self):
+
+            self.project_geopandas()
+            self.step_time()
 
     # CAST TO GEOPANDAS --------------------------------------------------------  
     def project_geopandas(self):
         '''
         Project to more appropriate coordinate system.
         '''
-        self.gdf = self.gdf.to_crs(self.proj) 
+        self.gdf = self.gdf.to_crs(self.crs_1) 
 
-
+    def step_time(self):
+        '''Return time between timestamps. Adds a field to dataframe.'''
+        col = 'Time Interval'
+        self.gdf[col] = self.grouped_mmsi['BaseDateTime'].diff()
+        self.gdf[col].fillna(datetime.timedelta(seconds=60), inplace=True)
+        self.gdf[col] = self.gdf[col].astype('timedelta64[s]')
 
 
 
