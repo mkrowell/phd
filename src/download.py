@@ -62,6 +62,9 @@ class NAIS_Download(object):
     def __init__(self, city, year, projection):
         self.root = abspath(join('data','raw','ais'))
         self.processed = abspath(join('data','processed','ais'))
+        os.makedirs(self.root, exist_ok=True)
+        os.makedirs(self.processed, exist_ok=True)
+
         self.year = year
         self.city = city
         self.projection = projection
@@ -81,14 +84,7 @@ class NAIS_Download(object):
         self.url = 'https://coast.noaa.gov/htdata/CMSP/AISDataHandler/{0}/AIS_{1}_{2}_Zone{3}.zip'
         self.download_dir = join(self.root, 'AIS_ASCII_by_UTM_Month')
 
-        self.df = None
-
-        # Create the directories if they dont exist
-        if not exists(self.root):
-            os.makedirs(self.root)
-        if not exists(self.processed):
-            os.makedirs(self.processed)
-            
+        self.df = None  
 
     @retry(stop_max_attempt_number=5)
     def download(self, month):
