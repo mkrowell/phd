@@ -12,10 +12,9 @@
 # ------------------------------------------------------------------------------
 # IMPORTS
 # ------------------------------------------------------------------------------
-from glob import glob
 import io
 import os
-from os.path import abspath, dirname, exists, join
+from os.path import abspath, basename, dirname, exists, join
 import requests
 from retrying import retry
 import shutil
@@ -28,49 +27,26 @@ import src
 # ------------------------------------------------------------------------------
 # DOWNLOADS
 # ------------------------------------------------------------------------------
-class Shoreline_Download(object):
+class Shapefile_Download(object):
 
     '''
-    Download a GIS representation of the United States shoreline
+    Download a shapefile representation of the United States shoreline
     and save it to the data directory.
     '''
 
-    def __init__(self):
-        self.root = abspath(join('..','data','raw','shoreline'))
-        self.url = 'https://coast.noaa.gov/htdata/Shoreline/us_medium_shoreline.zip'
-        self.output = join(self.root, 'us_medium_shoreline.shp')
+    def __init__(self, folder, url):
+        self.root = abspath(join('data','raw', folder))
+        self.url = url
+        self.name = basename(self.url).replace('.zip','.shp')
+        self.output = join(self.root, self.name)
 
     def download(self):
         '''Download zip file and extract to data directory.'''
         if exists(self.output):
-            print('The Shoreline shapefile has already been downloaded.')
+            print(f'The {self.name} shapefile has already been downloaded.')
             return self.output
 
-        print('Downloading the Shoreline shapefile...')
-        download = requests.get(self.url)
-        zfile = zipfile.ZipFile(io.BytesIO(download.content))
-        zfile.extractall(self.root)
-        return self.output
-
-class TSS_Download(object):
-
-    '''
-    Download a GIS representation of the US Traffic Separation Scheme
-    and save it to the data directory.
-    '''
-
-    def __init__(self):
-        self.root = abspath(join('..','data','raw','tss'))
-        self.url = 'http://encdirect.noaa.gov/theme_layers/data/shipping_lanes/shippinglanes.zip'
-        self.output = join(self.root, 'shippinglanes.shp')
-
-    def download(self):
-        '''Download zip file and extract to data directory.'''
-        if exists(self.output):
-            print('The TSS shapefile has already been downloaded.')
-            return self.output
-
-        print('Downloading the TSS shapefile...')
+        print(f'Downloading the {self.name} shapefile...')
         download = requests.get(self.url)
         zfile = zipfile.ZipFile(io.BytesIO(download.content))
         zfile.extractall(self.root)
@@ -83,13 +59,14 @@ class NAIS_Download(object):
     and save it to the data directory.
     '''
 
-    def __init__(self, city, year):
-        self.root = abspath(join('..','data','raw','ais'))
-        self.processed = abspath(join('..','data','processed','ais'))
+    def __init__(self, city, year, projection):
+        self.root = abspath(join('data','raw','ais'))
+        self.processed = abspath(join('data','processed','ais'))
         self.year = year
         self.city = city
+        self.projection = projection
 
-        param_yaml = abspath(join(dirname(__file__), '..', 'src', 'settings.yaml'))
+        param_yaml = abspath(join(dirname(__file__), 'settings.yaml'))
         with open(param_yaml, 'r') as stream:
             self.parameters = yaml.safe_load(stream)[self.city]
 
@@ -117,14 +94,13 @@ class NAIS_Download(object):
     def download(self, month):
         '''Download zip file and extract to temp directory.'''
         name = self.name.format(self.year, month, self.zone)
-        csv = join(self.root, name)
-        csv_processed = join(self.processed, name)
-        if exists(csv) or exists(csv_processed):
+        self.csv = join(self.root, name)
+        self.csv_processed = join(self.processed, name)
+        if exists(self.csv) or exists(self.csv_processed):
             return
 
         print('Downloading NAIS file for month {0}...'.format(month))
         url = self.url.format(self.year, self.year, month, self.zone)
-
         zfile = src.download_url(url, self.root, '.zip')
         src.extract_zip(zfile, self.root)
 
@@ -141,13 +117,27 @@ class NAIS_Download(object):
     def clean_raw(self, month):
         '''Basic cleaning and reducing of data.'''
         name = self.name.format(self.year, month, self.zone)
-        csv = join(self.root, name)
-        self.raw = src.dataframe.Basic_Clean(
-            csv,
-            self.minPoints,
-            self.lonMin,
-            self.lonMax,
-            self.latMin,
-            self.latMax
-        )
-        self.raw.clean_raw()
+        self.csv = join(self.root, name)
+        self.csv_processed = join(self.processed, name)
+        # Clean raw to processed
+        try:
+            self.raw_basic = src.dataframe.Basic_Clean(
+                self.csv,
+                self.minPoints,
+                self.lonMin,
+                self.lonMax,
+                self.latMin,
+                self.latMax
+            )
+            self.raw_basic.clean_raw()
+        except IOError:
+            pass
+        # Add step calculations and clean suscpicious data
+        try:
+            self.raw_advanced = src.dataframe.Advanced_Clean(
+                self.csv_processed, 
+                self.projection
+            )
+            self.raw_advanced.clean_raw()
+        except:
+            pass
