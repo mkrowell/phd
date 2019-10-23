@@ -95,7 +95,7 @@ class NAIS_Download(object):
         if exists(self.csv) or exists(self.csv_processed):
             return
 
-        print('Downloading NAIS file for month {0}...'.format(month))
+        print(f'Downloading NAIS file for month {month}...')
         url = self.url.format(self.year, self.year, month, self.zone)
         zfile = src.download_url(url, self.root, '.zip')
         src.extract_zip(zfile, self.root)
@@ -115,6 +115,7 @@ class NAIS_Download(object):
         name = self.name.format(self.year, month, self.zone)
         self.csv = join(self.root, name)
         self.csv_processed = join(self.processed, name)
+        print(f'Cleaning NAIS file for month f{month}...')
         # Clean raw to processed
         try:
             self.raw_basic = src.dataframe.Basic_Clean(
