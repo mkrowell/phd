@@ -102,7 +102,7 @@ class Basic_Clean(object):
         self.df.sort_values(['MMSI', 'BaseDateTime'], inplace=True)
         # Write out to procesed and delete raw
         self.df.to_csv(self.processed, index=False)
-        # os.remove(self.csv)
+        os.remove(self.csv)
         
 
     # DATAFRAME CLEANING -------------------------------------------------------
