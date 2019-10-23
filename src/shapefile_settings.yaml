@@ -1,0 +1,8 @@
+shore:
+  root: data\\raw\\shoreline
+  url: https://coast.noaa.gov/htdata/Shoreline/us_medium_shoreline.zip
+  output: us_medium_shoreline.shp
+tss:
+  root: data\\raw\\tss
+  url: http://encdirect.noaa.gov/theme_layers/data/shipping_lanes/shippinglanes.zip
+  output: shippinglanes.shp

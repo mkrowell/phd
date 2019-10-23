@@ -31,7 +31,6 @@ import time
 import yaml
 
 from . import time_all
-from . import download_url, extract_zip, find_file
 from . import dataframes
 from .downloads import TSS_Download, Shoreline_Download, NAIS_Download
 
@@ -121,18 +120,18 @@ class NAIS_Database(object):
         )
 
         # eda
-        self.table_eda = EDA_Table(
-            self.conn,
-            'eda_points_{0}'.format(self.city)
-        )
-        self.table_eda_tracks_mmsi = Tracks_Table(
-            self.conn,
-            'eda_tracks_mmsi_{0}'.format(self.city)
-        )
-        self.table_eda_tracks_trajectory = Tracks_Table(
-            self.conn,
-            'eda_tracks_trajectory_{0}'.format(self.city)
-        )
+        # self.table_eda = EDA_Table(
+        #     self.conn,
+        #     'eda_points_{0}'.format(self.city)
+        # )
+        # self.table_eda_tracks_mmsi = Tracks_Table(
+        #     self.conn,
+        #     'eda_tracks_mmsi_{0}'.format(self.city)
+        # )
+        # self.table_eda_tracks_trajectory = Tracks_Table(
+        #     self.conn,
+        #     'eda_tracks_trajectory_{0}'.format(self.city)
+        # )
 
 
 
@@ -221,8 +220,8 @@ class NAIS_Database(object):
 
     def build_shore(self):
         '''Construct shoreline table.'''
-        shore = Shoreline_Download(self.root)
-        self.table_shore.create_table(filepath=shore.download_shoreline())
+        shore = Shapefile_Download(self.root)
+        self.table_shore.create_table(filepath=shore.download())
 
         # Transform to UTM 10 SRID
         self.table_shore.project_column('geom', 'MULTILINESTRING', 32610)
@@ -410,40 +409,40 @@ class Postgres_Table(object):
         '''Drop the table if it exists.'''
         if table is None:
             table = self.table
-        sql = "DROP TABLE IF EXISTS {0}".format(table)
+        sql = f'DROP TABLE IF EXISTS {table}'
 
-        print("Dropping table {0}...".format(table))
+        print(f'Dropping table {table}...')
         self.cur.execute(sql)
         self.conn.commit()
 
     def drop_column(self, column):
         '''Drop the column if it exists.'''
-        sql = """
-            ALTER TABLE {0}
-            DROP COLUMN IF EXISTS {1}
-        """.format(self.table, column)
+        sql = f"""
+            ALTER TABLE {self.table}
+            DROP COLUMN IF EXISTS {column}
+        """
 
-        print("Dropping column {0}...".format(column))
+        print(f'Dropping column {column}...')
         self.cur.execute(sql)
         self.conn.commit()
 
     def copy_data(self, csv_file):
         '''Copy data into table.'''
         with open(csv_file, 'r') as f:
-            print('Copying {0} to database...'.format(csv_file))
+            print(f'Copying {csv_file} to database...')
             self.cur.copy_from(f, self.table, sep=',')
             self.conn.commit()
 
     def create_table(self, filepath=None):
         '''Create given table.'''
-        print('Constructing {0}...'.format(self.table))
+        print(f'Constructing {self.table}...')
         if filepath:
-            cmd = "shp2pgsql -s 4326 -d {0} {1} | psql -d postgres -U postgres -q".format(filepath, self.table)
+            cmd = f"shp2pgsql -s 4326 -d {filepath} {self.table} | psql -d postgres -U postgres -q"
             subprocess.call(cmd, shell=True)
         else:
-            sql = """
-                CREATE TABLE IF NOT EXISTS {0} ({1})
-            """.format(self.table, self.columns)
+            sql = f"""
+                CREATE TABLE IF NOT EXISTS {self.table} ({self.columns})
+            """
             self.cur.execute(sql)
             self.conn.commit()
 
@@ -465,7 +464,7 @@ class Postgres_Table(object):
 
     def add_column(self, name, datatype=None, geometry=False, default=None, srid=4326):
         '''Add column with datatype to the table.'''
-        print('Adding {0} ({1}) to {2}...'.format(name, datatype, self.table))
+        print(f'Adding {name} ({datatype}) to {self.table}...')
         sql_alter = """
             ALTER TABLE {0}
             ADD COLUMN IF NOT EXISTS {1}
