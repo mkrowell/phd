@@ -49,8 +49,11 @@ shore.download()
 tss = src.Shapefile_Download(folder_tss, url_tss)
 tss.download()
 
+# Download raw NAIS data from MarineCadastre for the given city and year 
+# and save it to the data directory.
 nais = src.NAIS_Download(city, year, epsg)
-# for month in months:
-#     nais.download(month)
-#     nais.clean_raw()
-# nais.clean_up()
+for month in months:
+    nais.download(month)
+    nais.clean_raw(month)
+# Remove temporary folders
+nais.clean_up()
