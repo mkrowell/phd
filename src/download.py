@@ -63,10 +63,9 @@ class NAIS_Download(object):
     and save it to the data directory.
     '''
 
-    def __init__(self, city, year, projection):
+    def __init__(self, city, year):
         self.city = city
         self.year = year
-        self.projection = projection
 
         # Data directories
         self.root = abspath(join('data','raw','ais'))

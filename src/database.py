@@ -17,7 +17,7 @@ from glob import glob
 from multiprocessing.dummy import Pool
 import numpy as np
 import os
-from os.path import dirname, exists, join
+from os.path import abspath, dirname, exists, join
 import osgeo.ogr
 import pandas as pd
 from postgis.psycopg import register
@@ -220,8 +220,11 @@ class NAIS_Database(object):
 
     def build_shore(self):
         '''Construct shoreline table.'''
-        shore = Shapefile_Download(self.root)
-        self.table_shore.create_table(filepath=shore.download())
+        shore = abspath(join(
+            parameters['shore']['root'], 
+            parameters['shore']['output']
+        ))
+        self.table_shore.create_table(filepath=shore)
 
         # Transform to UTM 10 SRID
         self.table_shore.project_column('geom', 'MULTILINESTRING', 32610)

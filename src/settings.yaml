@@ -57,7 +57,7 @@ seattle:
               ]'
           )
           ON CONFLICT (srid) DO NOTHING
-
+  epsg: 32610
 
 houston:
   zone: 15

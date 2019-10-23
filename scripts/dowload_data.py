@@ -25,10 +25,8 @@ import src
 # ------------------------------------------------------------------------------
 city = 'seattle'
 year = '2017' 
-projection = "+proj=utm +zone=10 +ellps=WGS84 +datum=WGS84 +units=m +no_defs"
-epsg = '32610'
-months = ['{:02d}'.format(m) for m in range(1,3)]
-
+# epsg = '32610'
+months = [str(i).zfill(2) for i in range(1, 3)]
 
 
 # ------------------------------------------------------------------------------
@@ -46,9 +44,10 @@ tss.download()
 
 # Download raw NAIS data from MarineCadastre for the given city and year 
 # and save it to the data directory.
-nais = src.NAIS_Download(city, year, epsg)
-# for month in months:
-#     # nais.download(month)
-#     nais.clean_raw(month)
+nais = src.NAIS_Download(city, year)
+for month in months:
+    nais.month = month
+    nais.download()
+    nais.clean_raw()
 # Remove temporary folders
 nais.clean_up()
