@@ -95,13 +95,14 @@ class Basic_Clean(object):
         # Remove invalid and insufficient IDs
         self.drop_bad_mmsi()
         self.drop_sparse_mmsi()
-        # Standardize data and sort
+        # Normalize vessel types and angles 
         self.map_vessel_types()
         self.normalize_angles()
+        # Standardize data
         self.drop_columns()
         self.df.sort_values(['MMSI', 'BaseDateTime'], inplace=True)
         # Write out to procesed and delete raw
-        self.df.to_csv(self.processed, index=False)
+        self.df.to_csv(self.processed, index=False, header=False)
         os.remove(self.csv)
         
 
