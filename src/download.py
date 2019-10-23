@@ -74,10 +74,11 @@ class NAIS_Download(object):
         os.makedirs(self.root, exist_ok=True)
         os.makedirs(self.processed, exist_ok=True)
 
-        # Data files
-        self.name = f'AIS_{self.year}_{self._month}_Zone{self.zone}.csv'
-        self.csv = join(self.root, self.name)
-        self.csv_processed = join(self.processed, self.name)
+        # Download parameters
+        self.download_dir = join(self.root, 'AIS_ASCII_by_UTM_Month')
+
+        # Data files are separated by month
+        self._month = '01'
 
         # City associated parameters
         param_yaml = join(dirname(__file__), 'settings.yaml')
@@ -91,10 +92,6 @@ class NAIS_Download(object):
         self.latMin = self.parameters['latMin']
         self.latMax = self.parameters['latMax']
 
-        # Download parameters
-        self.url = f'https://coast.noaa.gov/htdata/CMSP/AISDataHandler/{self.year}/AIS_{self.year}_{self._month}_Zone{self.zone}.zip'
-        self.download_dir = join(self.root, 'AIS_ASCII_by_UTM_Month')
-
         # Initialize dataframe
         self.df = None  
 
@@ -106,17 +103,38 @@ class NAIS_Download(object):
     @month.setter
     def month(self, month):
         '''Set the month of the instance.'''
+        month = str(month).zfill(2)
         if month not in [str(i).zfill(2) for i in range(1, 13)]:
             raise UserWarning('Month must be betwen 01 and 12.')
         self._month = month
 
+    @property
+    def name(self):
+        '''Return basename of the downloaded file.'''
+        return f'AIS_{self.year}_{self.month}_Zone{self.zone}.csv'
+
+    @property
+    def csv(self):
+        '''Return path to the raw downloaded file.'''
+        return join(self.root, self.name)
+
+    @property
+    def csv_processed(self):
+        '''Return path to the cleaned downloaded file.'''
+        return join(self.processed, self.name)
+
+    @property
+    def url(self):
+        '''Return url for the given year, month, and zone.'''
+        return f'https://coast.noaa.gov/htdata/CMSP/AISDataHandler/{self.year}/AIS_{self.year}_{self.month}_Zone{self.zone}.zip'
+    
     @retry(stop_max_attempt_number=5)
     def download(self):
         '''Download zip file and extract to temp directory.'''
         if exists(self.csv) or exists(self.csv_processed):
             return
 
-        print(f'Downloading NAIS file for month {month}...')
+        print(f'Downloading NAIS file for month {self.month}...')
         zfile = src.download_url(self.url, self.root, '.zip')
         src.extract_zip(zfile, self.root)
 
@@ -125,13 +143,9 @@ class NAIS_Download(object):
         shutil.copy(self.extracted_file, self.root)
         os.remove(zfile)
 
-    def clean_raw(self, month):
+    def clean_raw(self):
         '''Basic cleaning and reducing of data.'''
-        name = self.name.format(self.year, month, self.zone)
-        self.csv = join(self.root, name)
-        self.csv_processed = join(self.processed, name)
-        print(f'Cleaning NAIS file for month {month}...')
-        # Clean raw to processed
+        print(f'Cleaning NAIS file for month {self.month}...')
         try:
             self.raw_basic = src.dataframe.Basic_Clean(
                 self.csv,
@@ -143,6 +157,7 @@ class NAIS_Download(object):
             )
             self.raw_basic.clean_raw()
         except IOError:
+            print(f'NAIS file for month {self.month} has been cleaned.')
             pass
 
     def clean_up(self):
