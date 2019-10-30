@@ -31,8 +31,8 @@ import time
 import yaml
 
 from . import time_all
-from . import dataframes
-from .downloads import TSS_Download, Shoreline_Download, NAIS_Download
+
+
 
 
 # ------------------------------------------------------------------------------
@@ -45,7 +45,7 @@ class NAIS_Database(object):
     Build PostgreSQL database of NAIS point data.
     '''
 
-    def __init__(self, city, year, password):
+    def __init__(self, city, year):
         # arguments
         self.city = city
         self.year = year
@@ -110,14 +110,14 @@ class NAIS_Database(object):
         self.conn.commit()
 
         # environment
-        self.table_shore = Shapefile_Table(
-            self.conn,
-            'shore'
-        )
-        self.table_tss = Shapefile_Table(
-            self.conn,
-            'tss'
-        )
+        # self.table_shore = Shapefile_Table(
+        #     self.conn,
+        #     'shore'
+        # )
+        # self.table_tss = Shapefile_Table(
+        #     self.conn,
+        #     'tss'
+        # )
 
         # eda
         # self.table_eda = EDA_Table(
@@ -188,72 +188,45 @@ class NAIS_Database(object):
         return glob(self.root + '\\AIS*.csv')
 
     # BUILD DATABASE -----------------------------------------------------------
-    def build_tables(self):
-        '''Build database of raw data.'''
-        start = time.time()
-        try:
-            # Environmental
-            self.build_shore()
-            self.build_tss()
+    # def build_tables(self):
+    #     '''Build database of raw data.'''
+    #     start = time.time()
+    #     try:
+    #         # Points
+    #         # self.build_nais_points()
 
-            # Points
-            # self.build_nais_points()
+    #         # Tracks
+    #         # self.build_nais_tracks()
 
-            # Tracks
-            # self.build_nais_tracks()
+    #         # CPAsdf
+    #         # self.build_nais_cpas()
 
-            # CPAsdf
-            # self.build_nais_cpas()
+    #         # Analysis
+    #         # self.build_nais_encounters()
+    #         # self.build_nais_analysis()
 
-            # Analysis
-            # self.build_nais_encounters()
-            # self.build_nais_analysis()
+    #     except Exception as err:
+    #         print(err)
+    #         self.conn.rollback()
+    #         self.conn.close()
+    #     finally:
+    #         shutil.rmtree(self.root)
+    #         end = time.time()
+    #         print('Elapsed Time: {0} minutes'.format((end-start)/60))
 
-        except Exception as err:
-            print(err)
-            self.conn.rollback()
-            self.conn.close()
-        finally:
-            shutil.rmtree(self.root)
-            end = time.time()
-            print('Elapsed Time: {0} minutes'.format((end-start)/60))
+  
 
-    def build_shore(self):
-        '''Construct shoreline table.'''
-        shore = abspath(join(
-            parameters['shore']['root'], 
-            parameters['shore']['output']
-        ))
-        self.table_shore.create_table(filepath=shore)
-
-        # Transform to UTM 10 SRID
-        self.table_shore.project_column('geom', 'MULTILINESTRING', 32610)
-
-        # Keep only the relevant shore line
-        self.table_shore.reduce_table('regions', '!=', self.parameters['region'])
-        self.table_shore.add_index("idx_geom", "geom", type="gist")
-
-    def build_tss(self):
-        '''Construct TSS table.'''
-        tss = TSS_Download(self.root)
-        self.table_tss.create_table(filepath=tss.download_tss())
-
-        # Transform to UTM 10 SRID
-        self.table_shore.project_column('geom', 'MULTILINESTRING', 32610)
-
-        # Keep only the relevant TSS
-        self.table_tss.reduce_table('objl', '!=', self.parameters['tss'])
-        self.table_tss.add_index("idx_geom", "geom", type="gist")
+  
 
     def build_nais_eda(self):
         '''Build nais exploratory data analysis table.'''
         # Download and process raw AIS data from MarineCadastre.gov
-        if not exists(self.nais_file):
-            raw = NAIS_Download(self.root, self.city, self.year)
-            for month in self.months:
-                raw.download_nais(month)
-            raw.clean_up()
-            raw.preprocess_eda()
+        # if not exists(self.nais_file):
+        #     raw = NAIS_Download(self.root, self.city, self.year)
+        #     for month in self.months:
+        #         raw.download_nais(month)
+        #     raw.clean_up()
+        #     raw.preprocess_eda()
 
         # Create table
         self.table_eda.drop_table()
@@ -277,15 +250,6 @@ class NAIS_Database(object):
 
     def build_nais_points(self):
         '''Build nais points table.'''
-        # Download and process raw AIS data from MarineCadastre.gov
-        print('Constructing nais_points table...')
-        if not exists(self.nais_file):
-            raw = NAIS_Download(self.root, self.city, self.year)
-            for month in self.months:
-                raw.download_nais(month)
-            raw.clean_up()
-            raw.preprocess_nais()
-
         # Create table
         self.table_points.drop_table()
         self.table_points.create_table()
@@ -388,16 +352,26 @@ class NAIS_Database(object):
 #
 
 # ------------------------------------------------------------------------------
-# TABLES
+# BASE CLASSES
 # ------------------------------------------------------------------------------
-class Postgres_Table(object):
+@time_all
+class Postgres_Connection(object):
 
-    def __init__(self, conn, table):
-        '''Connect to database.'''
-        # Connect to the database and create a cursor
-        self.conn = conn
-        self.cur = self.conn.cursor()
+    '''
+    Create standard connection to the postgres database.
+    '''
+
+    def __init__(self, table):
+        self.conn = psycopg2.connect(
+            host='localhost',
+            dbname='postgres',
+            user='postgres',
+            password=os.environ['PGPASSWORD']
+        )
+
+        # Create default cursor
         self.table = table
+        self.cur = self.conn.cursor()
 
         # Enable PostGIS extension
         self.cur.execute("CREATE EXTENSION IF NOT EXISTS postgis")
@@ -407,6 +381,12 @@ class Postgres_Table(object):
         # Set timezone to UTC
         self.cur.execute("SET timezone = 'UTC'")
         self.conn.commit()
+
+class Postgres_Table(Postgres_Connection):
+
+    def __init__(self, table):
+        '''Connect to default database.'''
+        super(Postgres_Table, self).__init__(table)
 
     def drop_table(self, table=None):
         '''Drop the table if it exists.'''
@@ -440,7 +420,7 @@ class Postgres_Table(object):
         '''Create given table.'''
         print(f'Constructing {self.table}...')
         if filepath:
-            cmd = f"shp2pgsql -s 4326 -d {filepath} {self.table} | psql -d postgres -U postgres -q"
+            cmd = f'"C:\\Program Files\\PostgreSQL\\12\\bin\\shp2pgsql.exe" -s 4326 -d {filepath} {self.table} | psql -d postgres -U postgres -q'
             subprocess.call(cmd, shell=True)
         else:
             sql = f"""
@@ -518,21 +498,16 @@ class Postgres_Table(object):
         '''Add local time.'''
         name = 'datetime_local'
         self.add_column(name, datatype='timestamptz')
-        sql = """
-            UPDATE {table}
-            SET {newCol} = {inputCol} at time zone 'utc' at time zone '{zone}'
-        """.format(table=self.table, newCol=name, inputCol=input_col, zone=timezone)
+        sql = f"""
+            UPDATE {self.table}
+            SET {name} = {input_col} at time zone 'utc' at time zone '{timezone}'
+        """
         self.cur.execute(sql)
         self.conn.commit()
 
     def reduce_table(self, column, relationship, value):
-        '''Drop rows on one NOT EQUAL TO condition.'''
-        print('Dropping {0} {1} {2} from {3}...'.format(
-            column,
-            relationship,
-            value,
-            self.table)
-        )
+        '''Drop rows that meet condition.'''
+        print(f'Dropping {column} {relationship} {value} from {self.table}...')
         if isinstance(value, str):
             sql_delete = "DELETE FROM {0} WHERE {1} {2} '{3}'"
         else:
@@ -542,10 +517,8 @@ class Postgres_Table(object):
         self.conn.commit()
 
     def remove_null(self, col):
-        print('Deleting null rows from {0}...'.format(self.table))
-        sql = """
-            DELETE FROM {0} WHERE {1} IS NULL
-        """.format(self.table, col)
+        print(f'Deleting null rows from {self.table}...')
+        sql = f"""DELETE FROM {self.table} WHERE {col} IS NULL"""
         self.cur.execute(sql)
         self.conn.commit()
 
@@ -555,24 +528,132 @@ class Postgres_Table(object):
             table = self.table
         if select_col is None:
             select_col = '*'
-        sql = """
-            SELECT {0}
-            FROM {1}
-        """.format(select_col, table)
+        sql = f"""SELECT {select_col} FROM {table}"""
 
         if where_cond is not None:
-            sql = sql + """ WHERE {0} """.format(where_cond)
+            sql = sql + f""" WHERE {where_cond} """
 
         self.cur.execute(sql)
         column_names = [desc[0] for desc in self.cur.description]
         return pd.DataFrame(self.cur.fetchall(), columns=column_names)
 
-class Shapefile_Table(Postgres_Table):
 
-    def __init__(self, conn, table):
+
+
+# ------------------------------------------------------------------------------
+# NAIS CLASSES
+# ------------------------------------------------------------------------------
+class Points_Table(Postgres_Table):
+
+    def __init__(self, table):
         '''Connect to default database.'''
-        super(Shapefile_Table, self).__init__(conn, table)
-        self.cur = self.conn.cursor()
+        super(Points_Table, self).__init__(table)
+        self.columns = """
+            MMSI integer NOT NULL,
+            DateTime timestamptz NOT NULL,
+            LAT float8 NOT NULL,
+            LON float8 NOT NULL,
+            SOG float(4) NOT NULL,
+            COG float(4) NOT NULL,
+            Heading float(4),
+            VesselName varchar(32),
+            VesselType varchar(64),
+            Status varchar(64),
+            Length float(4),
+            In_Bound boolean
+        """
+
+        self.window_mmsi = '(PARTITION BY MMSI ORDER BY DateTime)'
+
+    def add_time_interval(self):
+        '''Add time interval between data points.'''
+        name = 'TimeInterval'
+        self.add_column(name, datatype='interval', default="'0 seconds'")
+        sql = f"""
+            UPDATE {self.table}
+            SET {name} = temp.Interval
+            FROM (
+                SELECT 
+                    MMSI,
+                    DateTime,
+                    DateTime - LAG(DateTime, 1) OVER {self.window_mmsi} AS Interval
+                FROM {self.table}
+            ) AS temp
+            WHERE 
+                temp.MMSI = {self.table}.MMSI AND
+                temp.DateTime = {self.table}.DateTime        
+        """
+        self.cur.execute(sql)
+        self.conn.commit()
+
+    def add_geometry(self):
+        '''Add PostGIS PointM geometry to the database and make it index.'''
+        self.add_column('geom', datatype='POINTM', geometry=True)
+        self.add_point('geom', 'lon', 'lat', "date_part('epoch', datetime)")
+        # self.add_point('geom', 'lon', 'lat', "date_part('epoch', datetime_local)")
+
+    def add_distance(self):
+        '''Add distance between data points.'''
+        name = 'Distance'
+        self.add_column(name, datatype='float(4)', default=0)
+        sql = f"""
+            UPDATE {self.table}
+            SET {name} = temp.Distance
+            FROM (
+                SELECT 
+                    MMSI,
+                    DateTime,
+                    geom,
+                    ST_Distance(geom, LAG(geom, 1) OVER {self.window_mmsi}) AS Distance
+                FROM {self.table}
+            ) AS temp
+            WHERE 
+                temp.MMSI = {self.table}.MMSI AND
+                temp.DateTime = {self.table}.DateTime        
+        """
+        self.cur.execute(sql)
+        self.conn.commit()
+
+    def add_distance_derived(self):
+        '''Add distance between data points.'''
+        name = 'DistanceDerived'
+        self.add_column(name, datatype='float(4)', default=0)
+        sql = f"""
+            UPDATE {self.table}
+            SET {name} = temp.Distance
+            FROM (
+                SELECT 
+                    MMSI,
+                    DateTime,
+                    SOG*EXTRACT(epoch FROM TimeInterval)/3600 AS Distance
+                FROM {self.table}
+            ) AS temp
+            WHERE 
+                temp.MMSI = {self.table}.MMSI AND
+                temp.DateTime = {self.table}.DateTime        
+        """
+        self.cur.execute(sql)
+        self.conn.commit()
+
+    def add_tss(self, tss):
+        '''Add column marking whether the point is in the TSS.'''
+        name = 'in_tss'
+        self.add_column(name, datatype='boolean', default='FALSE')
+        sql = f"""
+            UPDATE {self.table}
+            SET {name} = TRUE
+            FROM (
+                SELECT points.lat, points.lon
+                FROM {self.table} AS points
+                RIGHT JOIN {tss} AS polygons
+                ON ST_Contains(polygons.geom, points.geom)
+            ) as tssTest
+            WHERE {self.table}.lat=tssTest.lat
+            AND {self.table}.lon=tssTest.lon
+        """
+        self.cur.execute(sql)
+        self.conn.commit()
+
 
 class EDA_Table(Postgres_Table):
 
@@ -622,61 +703,6 @@ class Tracks_Table(Postgres_Table):
         self.cur.execute(sql)
         self.conn.commit()
 
-
-
-
-
-
-class Points_Table(Postgres_Table):
-
-    def __init__(self, conn, table):
-        '''Connect to default database.'''
-        super(Points_Table, self).__init__(conn, table)
-        self.cur = self.conn.cursor()
-        self.columns = """
-            MMSI integer NOT NULL,
-            DateTime timestamptz NOT NULL,
-            Track integer NOT NULL,
-            Step_COG_Degrees float(4) NOT NULL,
-            Step_COG_Radians float(4) NOT NULL,
-            COG_Cosine float(4) NOT NULL,
-            Step_Acceleration float(4) NOT NULL,
-            LAT float8 NOT NULL,
-            LON float8 NOT NULL,
-            SOG float(4) NOT NULL,
-            COG float(4) NOT NULL,
-            Point_COG float(4) NOT NULL,
-            Heading float(4) NOT NULL,
-            VesselName varchar(32),
-            VesselType varchar(64) NOT NULL,
-            Status varchar(64),
-            Length float(4),
-            Width float(4)
-        """
-
-    def add_geometry(self):
-        '''Add PostGIS PointM geometry to the database and make it index.'''
-        self.add_column('geom', datatype='POINTM', geometry=True)
-        self.add_point('geom', 'lon', 'lat', "date_part('epoch', datetime_local)")
-
-    def add_tss(self, tss):
-        '''Add column marking whether the point is in the TSS.'''
-        name = 'in_tss'
-        self.add_column(name, datatype='boolean', default='FALSE')
-        sql = """
-            UPDATE {table}
-            SET {col} = TRUE
-            FROM (
-                SELECT points.lat, points.lon
-                FROM {table} AS points
-                RIGHT JOIN {tssTable} AS polygons
-                ON ST_Contains(polygons.geom, points.geom)
-            ) as tssTest
-            WHERE {table}.lat=tssTest.lat
-            AND {table}.lon=tssTest.lon
-        """.format(table=self.table, col=name, tssTable=tss)
-        self.cur.execute(sql)
-        self.conn.commit()
 
 # class Tracks_Table(Postgres_Table):
 #
