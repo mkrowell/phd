@@ -100,6 +100,7 @@ class Basic_Clean(object):
         self.normalize_angles()
         # Standardize data
         self.drop_columns()
+        self.replace_nan()
         self.df.sort_values(['MMSI', 'BaseDateTime'], inplace=True)
         # Write out to procesed and delete raw
         self.df.to_csv(self.processed, index=False, header=False)
@@ -185,6 +186,18 @@ class Basic_Clean(object):
             lambda g: len(g)>self.minPoints
         )
 
+    def map_vessel_types(self):
+        '''
+        Map codes to categories.
+        '''
+        type_dict = abspath(join(dirname(__file__), 'vessel_types.yaml'))
+        with open("src\\vessel_types.yaml", 'r') as stream:
+            v_map = yaml.safe_load(stream)
+
+        self.df['VesselType'].replace("", np.nan, inplace=True)
+        self.df['VesselType'] = self.df['VesselType'].map(v_map)
+        self.df['VesselType'] = self.df['VesselType'].astype('category')
+
     def normalize_angles(self):
         '''
         Normalize COG to an angle between [0, 360).
@@ -203,19 +216,14 @@ class Basic_Clean(object):
         unused = ['CallSign', 'IMO', 'Cargo', 'Width', 'Draft']
         self.df.drop(columns=unused, inplace=True)
 
-    def map_vessel_types(self):
+    def replace_nan(self):
         '''
-        Map codes to categories.
+        Fill undefined values with default float value.
         '''
-        type_dict = abspath(join(dirname(__file__), 'vessel_types.yaml'))
-        with open("src\\vessel_types.yaml", 'r') as stream:
-            v_map = yaml.safe_load(stream)
+        for col in ['Heading', 'Length']:
+            self.df[col].replace(np.nan, -1, inplace=True)
 
-        self.df['VesselType'].replace("", np.nan, inplace=True)
-        self.df['VesselType'] = self.df['VesselType'].map(v_map)
-        self.df['VesselType'] = self.df['VesselType'].astype('category')
-
-
+   
 
 
 
@@ -244,7 +252,7 @@ class Basic_Clean(object):
 # METERS_IN_NM = 1852
 # EARTH_RADIUS_KM = 6371
 
-@time_all
+
 class Advanced_Clean(object):
 
     '''
