@@ -50,7 +50,7 @@ class Shapefile_Download(object):
             print(f'The {self.filename} shapefile has already been downloaded.')
             return self.output
 
-        print(f'Downloading the {self.name} shapefile...')
+        print(f'Downloading the {self.filename} shapefile...')
         download = requests.get(self.url)
         zfile = zipfile.ZipFile(io.BytesIO(download.content))
         zfile.extractall(self.root)
