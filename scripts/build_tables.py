@@ -26,7 +26,7 @@ import src
 city = 'seattle'
 srid = 32610
 year = '2017'
-months = [str(i).zfill(2) for i in range(1, 3)]
+months = [str(i).zfill(2) for i in range(1, 13)]
 
 # Load the parameters for the seattle region
 parameters_file = abspath(join(dirname(__file__) ,'..','src','settings.yaml'))
@@ -69,10 +69,24 @@ table_tss.add_index('idx_geom', 'geom', type='gist')
 # ------------------------------------------------------------------------------
 # BUILD NAIS TABLES
 # ------------------------------------------------------------------------------
-table_points = src.Points_Table('points')
+table_points = src.Points_Table('moving')
 table_points.drop_table()
 table_points.create_table()
+
+# Copy processed NAIS data to table
 nais = src.NAIS_Download(city, year)
 for month in months:
     nais.month = month
     table_points.copy_data(nais.csv_processed)
+
+# Add local time and time interval between rows grouped by MMSI
+# table_points.add_local_time()
+table_points.add_time_interval()
+table_points.reduce_table('TimeInterval', '>=', '4 minutes')
+
+# delete odd cog/sog
+
+# need to recalculate time interval for tracks
+# # Add POINTM
+# table_points.add_geometry()
+# table_points.add_distance()
