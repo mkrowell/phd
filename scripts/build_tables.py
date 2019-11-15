@@ -47,7 +47,7 @@ table_shore.project_column('geom', 'MULTILINESTRING', srid)
 
 # Keep only the relevant shore line
 table_shore.reduce_table('regions', '!=', parameters['region'])
-table_shore.add_index('idx_geom', 'geom', type='gist')
+table_shore.add_index('idx_geom', 'geom', kind='gist')
 
 
 # ------------------------------------------------------------------------------
@@ -63,15 +63,15 @@ table_shore.project_column('geom', 'MULTILINESTRING', srid)
 
 # Keep only the relevant TSS
 table_tss.reduce_table('objl', '!=', parameters['tss'])
-table_tss.add_index('idx_geom', 'geom', type='gist')
+table_tss.add_index('idx_geom', 'geom', kind='gist')
 
 
 # ------------------------------------------------------------------------------
 # BUILD NAIS TABLES
 # ------------------------------------------------------------------------------
-table_points = src.Points_Table('moving')
+table_points = src.Points_Table('points_moving')
 table_points.drop_table()
-table_points.create_table()
+table_points.create_table(columns=table_points.columns)
 
 # Copy processed NAIS data to table
 nais = src.NAIS_Download(city, year)
@@ -80,13 +80,25 @@ for month in months:
     table_points.copy_data(nais.csv_processed)
 
 # Add local time and time interval between rows grouped by MMSI
-# table_points.add_local_time()
 table_points.add_time_interval()
+table_points.add_index("idx_time", "TimeInterval")
+
+# Remove points that have too high a time interval between points
+# In bounds data is no longer needed 
 table_points.reduce_table('TimeInterval', '>=', '4 minutes')
+table_points.drop_column('In_Bound')
 
-# delete odd cog/sog
+# Delete odd cog/sog
+table_points.drop_anomaly()
 
-# need to recalculate time interval for tracks
+# Recalculate time interval
+table_points.add_time_interval()
+table_points.update_index('idx_time')
+
 # # Add POINTM
 # table_points.add_geometry()
-# table_points.add_distance()
+# table_points.project_column('geom', 'POINTM', 32610)
+# table_points.add_index("idx_geom", "geom")
+
+
+
