@@ -33,8 +33,6 @@ import yaml
 from . import time_all
 
 
-
-
 # ------------------------------------------------------------------------------
 # MAIN CLASS
 # ------------------------------------------------------------------------------
@@ -354,14 +352,14 @@ class NAIS_Database(object):
 # ------------------------------------------------------------------------------
 # BASE CLASSES
 # ------------------------------------------------------------------------------
-@time_all
 class Postgres_Connection(object):
 
     '''
     Create standard connection to the postgres database.
     '''
 
-    def __init__(self, table):
+    def __init__(self):
+        # Connect to postgres database using environ password.
         self.conn = psycopg2.connect(
             host='localhost',
             dbname='postgres',
@@ -369,130 +367,194 @@ class Postgres_Connection(object):
             password=os.environ['PGPASSWORD']
         )
 
-        # Create default cursor
-        self.table = table
-        self.cur = self.conn.cursor()
+        # Set standard properties and extensions
+        with self.conn.cursor() as cur:
+            cur.execute("SET timezone = 'UTC'")
+            cur.execute("CREATE EXTENSION IF NOT EXISTS postgis")
+            self.conn.commit()
 
         # Enable PostGIS extension
-        self.cur.execute("CREATE EXTENSION IF NOT EXISTS postgis")
-        self.conn.commit()
         register(self.conn)
 
-        # Set timezone to UTC
-        self.cur.execute("SET timezone = 'UTC'")
-        self.conn.commit()
+    def close_connection(self):
+        """Close the database connection, if open.
+        """
+        if self.conn:
+            self.conn.close()
+            print('Database connection closed.')
 
 class Postgres_Table(Postgres_Connection):
 
+    """
+    Expose common table functions.
+    """
+
     def __init__(self, table):
-        '''Connect to default database.'''
-        super(Postgres_Table, self).__init__(table)
+        super(Postgres_Table, self).__init__()
+        self.table = table
+
+    def run_DDL(self, query):
+        """Execute a DDL SQL statement and commit it to the database.
+        
+        Args:
+            query (string): A Data Definition Language SQL statement
+        """
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(query)
+                self.conn.commit()
+        except psycopg2.DatabaseError as e:
+            print(e)
+
+    def create_table(self, filepath=None, columns=None):
+        """Create table in the database.
+
+        If filepath is provided, the shp2pgsql utility will be used 
+        to create table from the file. Otherwise, an empty table will
+        be created with provided columns.
+        
+        Args:
+            filepath (string, optional): Path to the shapefile that is to 
+                be created as a table. Defaults to None.
+            columns (string, optional): SQL statement defining the columns 
+                of the table. Defaults to None.
+        """
+        if filepath:
+            print(f'Constructing {self.table} from {filepath}...')
+            cmd = f'"C:\\Program Files\\PostgreSQL\\12\\bin\\shp2pgsql.exe" -s 4326 -d {filepath} {self.table} | C:\\OSGEO4w\Bin\psql -d postgres -U postgres -q'
+            subprocess.call(cmd, shell=True)
+        else:
+            print(f'Constructing {self.table} from columns...')
+            sql = f'CREATE TABLE IF NOT EXISTS {self.table} ({columns})'
+            self.run_DDL(sql)
 
     def drop_table(self, table=None):
-        '''Drop the table if it exists.'''
+        """Drop the table from the database, if it exists.
+
+        If table is None, self.table is dropped.
+        
+        Args:
+            table (string, optional): Name of table to be dropped. Defaults to None.
+        """
         if table is None:
             table = self.table
         sql = f'DROP TABLE IF EXISTS {table}'
-
         print(f'Dropping table {table}...')
-        self.cur.execute(sql)
-        self.conn.commit()
-
-    def drop_column(self, column):
-        '''Drop the column if it exists.'''
-        sql = f"""
-            ALTER TABLE {self.table}
-            DROP COLUMN IF EXISTS {column}
-        """
-
-        print(f'Dropping column {column}...')
-        self.cur.execute(sql)
-        self.conn.commit()
-
+        self.run_DDL(sql)
+  
     def copy_data(self, csv_file):
-        '''Copy data into table.'''
-        with open(csv_file, 'r') as f:
-            print(f'Copying {csv_file} to database...')
-            self.cur.copy_from(f, self.table, sep=',')
+        """Copy data from CSV file to table.
+        
+        Args:
+            csv_file (string): Filepath to the csv data 
+                that is to be copied into the table.
+        """
+        with open(csv_file, 'r') as csv:
+            print(f'Copying {csv_file} to {self.table}...')
+            self.conn.cursor().copy_from(csv, self.table, sep=',')
             self.conn.commit()
-
-    def create_table(self, filepath=None):
-        '''Create given table.'''
-        print(f'Constructing {self.table}...')
-        if filepath:
-            cmd = f'"C:\\Program Files\\PostgreSQL\\12\\bin\\shp2pgsql.exe" -s 4326 -d {filepath} {self.table} | psql -d postgres -U postgres -q'
-            subprocess.call(cmd, shell=True)
-        else:
-            sql = f"""
-                CREATE TABLE IF NOT EXISTS {self.table} ({self.columns})
-            """
-            self.cur.execute(sql)
-            self.conn.commit()
-
-    def add_index(self, name, field, type=None):
-        '''Add index to table using the given column.'''
-        print('Adding index on {0}...'.format(field))
-        if type is None:
-            sql = """
-                CREATE INDEX IF NOT EXISTS {0}
-                ON {1} ({2})
-            """
-        if type == 'gist':
-            sql = """
-                CREATE INDEX IF NOT EXISTS {0}
-                ON {1} USING GiST ({2})
-            """
-        self.cur.execute(sql.format(name, self.table, field))
-        self.conn.commit()
 
     def add_column(self, name, datatype=None, geometry=False, default=None, srid=4326):
-        '''Add column with datatype to the table.'''
-        print(f'Adding {name} ({datatype}) to {self.table}...')
-        sql_alter = """
-            ALTER TABLE {0}
-            ADD COLUMN IF NOT EXISTS {1}
-        """.format(self.table, name)
+        """Add column to the table with the given datatype and default.
+
+        If geometry if True, set the appropriate SRID.
+        
+        Args:
+            name (string): Name of the new column
+            datatype (type, optional): Postgresql/PostGIS datatype. Defaults to None.
+            geometry (bool, optional): Whether the datatype is a geometry. Defaults to False.
+            default (value, optional): The default value of the column. Should be
+                the same type as datatype. Defaults to None.
+            srid (int, optional): The SRID of the geometry, if True. Defaults to 4326.
+        """
+        default_str = ''
+        datatype_str = f'{datatype}'
 
         # Handle geometry types
-        sql_type = """ {0} """
         if geometry:
-            sql_type = """ geometry({0}, {1}) """
-        sql = sql_alter + sql_type.format(datatype, srid)
-
+            datatype_str = f'geometry({datatype}, {srid})'
+       
         # Handle default data types
         if default:
-            sql_default = """DEFAULT {0}"""
-            sql = sql + sql_default.format(default)
+            default_str = f'DEFAULT {default}'
 
-        self.cur.execute(sql)
-        self.conn.commit()
+        # Entire SQL string
+        sql = f"""
+            ALTER TABLE {self.table} 
+            ADD COLUMN IF NOT EXISTS {name} {datatype_str}
+            {default_str}
+        """
+
+        print(f'Adding {name} ({datatype}) to {self.table}...')
+        self.run_DDL(sql)
+
+    def drop_column(self, column):
+        """Drop column from the table, if column exists.
+        
+        Args:
+            column (string): Name of the column to be dropped.
+        """
+        sql = f'ALTER TABLE {self.table} DROP COLUMN IF EXISTS {column}'
+        print(f'Dropping column {column}...')
+        self.run_DDL(sql)
 
     def add_point(self, name, lon, lat, time=None):
-        '''Add point geometry to column.'''
+        """Make the given column a POINT/POINTM geometry.
+        
+        Args:
+            name (string): Name of existing column to be made into Point geometry.
+            lon (string): Name of the column containing the longitude of Point.
+            lat (string): Name of the column containing the latitude of Point.
+            time (string, optional): Name of the column containing the latitude of Point. Defaults to None.
+        """
         if time:
-            sql = """
-                UPDATE {0}
-                SET {1} = ST_SetSRID(ST_MakePointM({2}, {3}, {4}), 4326)
-            """.format(self.table, name, lon, lat, time)
+            sql = f"""
+                UPDATE {self.table}
+                SET {name} = ST_SetSRID(ST_MakePointM({lon}, {lat}, {time}), 4326)
+            """
         else:
-            sql = """
-                UPDATE {0}
-                SET {1} = ST_SetSRID(ST_MakePoint({2}, {3}), 4326)
-            """.format(self.table, name, lon, lat)
-        self.cur.execute(sql)
-        self.conn.commit()
+            sql = f"""
+                UPDATE {self.table}
+                SET {name} = ST_SetSRID(ST_MakePoint({lon}, {lat}), 4326)
+            """
+        self.run_DDL(sql)
 
     def project_column(self, column, datatype, new_srid):
-        '''Transform projection.'''
-        print('Projecting {0} from 4326 to {1}...'.format(column, new_srid))
-        sql = """
-            ALTER TABLE {table}
+        """Convert the SRID of the geometry column.
+        
+        Args:
+            column (sting): Name of the column to project
+            datatype (type): Postgis geometry datatype
+            new_srid (int): Code for the SRID to be projected to
+        """
+        sql = f"""
+            ALTER TABLE {self.table}
             ALTER COLUMN {column}
             TYPE Geometry({datatype}, {new_srid})
             USING ST_Transform({column}, {new_srid});
-        """.format(table=self.table, column=column, datatype=datatype, new_srid=new_srid)
-        self.cur.execute(sql)
-        self.conn.commit()
+        """
+        print(f'Projecting {column} from 4326 to {new_srid}...')
+        self.run_DDL(sql)
+
+    def add_index(self, name, field, kind=None):
+        '''Add index to table using the given column.'''
+        if kind in 'gist':
+            kind_str = 'USING GiST'
+        else:
+            kind_str = ''
+
+        sql = f"""
+                CREATE INDEX IF NOT EXISTS {name}
+                ON {self.table} {kind_str} ({field})
+            """
+        print(f'Adding index on {field}...')
+        self.run_DDL(sql)
+    
+    def update_index(self, name):
+        '''Add index to table using the given column.'''
+        print('Updating index on {0}...'.format(field))
+        sql = f"""REINDEX Index {name}"""
+        self.run_DDL(sql)
 
     def add_local_time(self, input_col="datetime", timezone="america/los_angeles"):
         '''Add local time.'''
@@ -513,9 +575,8 @@ class Postgres_Table(Postgres_Connection):
         else:
             sql_delete = "DELETE FROM {0} WHERE {1} {2} {3}"
         sql = sql_delete.format(self.table, column, relationship, value)
-        self.cur.execute(sql)
-        self.conn.commit()
-
+        self.run_DDL(sql)
+        
     def remove_null(self, col):
         print(f'Deleting null rows from {self.table}...')
         sql = f"""DELETE FROM {self.table} WHERE {col} IS NULL"""
@@ -536,8 +597,6 @@ class Postgres_Table(Postgres_Connection):
         self.cur.execute(sql)
         column_names = [desc[0] for desc in self.cur.description]
         return pd.DataFrame(self.cur.fetchall(), columns=column_names)
-
-
 
 
 # ------------------------------------------------------------------------------
@@ -586,6 +645,36 @@ class Points_Table(Postgres_Table):
         self.cur.execute(sql)
         self.conn.commit()
 
+    def update_time_interval(self):
+        '''Add time interval between data points.'''
+        name = 'TimeInterval'
+        sql = f"""
+            UPDATE {self.table}
+            SET {name} = temp.Interval
+            FROM (
+                SELECT 
+                    MMSI,
+                    DateTime,
+                    DateTime - LAG(DateTime, 1) OVER {self.window_mmsi} AS Interval
+                FROM {self.table}
+            ) AS temp
+            WHERE 
+                temp.MMSI = {self.table}.MMSI AND
+                temp.DateTime = {self.table}.DateTime        
+        """
+        self.cur.execute(sql)
+        self.conn.commit()
+
+    def drop_anomaly(self):
+        '''Drop rows that have default SOG/COG values.'''
+        sql = f"""
+            DELETE FROM {self.table} WHERE 
+            SOG < 0 AND
+            COG = 310.4
+        """
+        self.cur.execute(sql)
+        self.conn.commit()
+
     def add_geometry(self):
         '''Add PostGIS PointM geometry to the database and make it index.'''
         self.add_column('geom', datatype='POINTM', geometry=True)
@@ -605,27 +694,6 @@ class Points_Table(Postgres_Table):
                     DateTime,
                     geom,
                     ST_Distance(geom, LAG(geom, 1) OVER {self.window_mmsi}) AS Distance
-                FROM {self.table}
-            ) AS temp
-            WHERE 
-                temp.MMSI = {self.table}.MMSI AND
-                temp.DateTime = {self.table}.DateTime        
-        """
-        self.cur.execute(sql)
-        self.conn.commit()
-
-    def add_distance_derived(self):
-        '''Add distance between data points.'''
-        name = 'DistanceDerived'
-        self.add_column(name, datatype='float(4)', default=0)
-        sql = f"""
-            UPDATE {self.table}
-            SET {name} = temp.Distance
-            FROM (
-                SELECT 
-                    MMSI,
-                    DateTime,
-                    SOG*EXTRACT(epoch FROM TimeInterval)/3600 AS Distance
                 FROM {self.table}
             ) AS temp
             WHERE 
