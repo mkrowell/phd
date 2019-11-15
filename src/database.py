@@ -354,12 +354,12 @@ class NAIS_Database(object):
 # ------------------------------------------------------------------------------
 class Postgres_Connection(object):
 
-    '''
-    Create standard connection to the postgres database.
-    '''
+    """
+    Open/close standard connection to the postgres database.
+    """
 
     def __init__(self):
-        # Connect to postgres database using environ password.
+        # Create connection object to Postgres
         self.conn = psycopg2.connect(
             host='localhost',
             dbname='postgres',
@@ -386,25 +386,26 @@ class Postgres_Connection(object):
 class Postgres_Table(Postgres_Connection):
 
     """
-    Expose common table functions.
+    Base class for Postgres tables. 
     """
 
     def __init__(self, table):
         super(Postgres_Table, self).__init__()
         self.table = table
+        self.srid = 4326
 
     def run_DDL(self, query):
         """Execute a DDL SQL statement and commit it to the database.
         
         Args:
-            query (string): A Data Definition Language SQL statement
+            query (string): A Data Definition Language SQL statement.
         """
         try:
             with self.conn.cursor() as cur:
                 cur.execute(query)
                 self.conn.commit()
-        except psycopg2.DatabaseError as e:
-            print(e)
+        except psycopg2.DatabaseError as err:
+            print(err)
 
     def create_table(self, filepath=None, columns=None):
         """Create table in the database.
@@ -423,15 +424,18 @@ class Postgres_Table(Postgres_Connection):
             print(f'Constructing {self.table} from {filepath}...')
             cmd = f'"C:\\Program Files\\PostgreSQL\\12\\bin\\shp2pgsql.exe" -s 4326 -d {filepath} {self.table} | C:\\OSGEO4w\Bin\psql -d postgres -U postgres -q'
             subprocess.call(cmd, shell=True)
-        else:
+        elif columns:
             print(f'Constructing {self.table} from columns...')
             sql = f'CREATE TABLE IF NOT EXISTS {self.table} ({columns})'
             self.run_DDL(sql)
+        else:
+            raise UserWarning('You must provide a filepath or column defintions.')
 
     def drop_table(self, table=None):
         """Drop the table from the database, if it exists.
 
-        If table is None, self.table is dropped.
+        If table is None, self.table is dropped. Otherwise, the given 
+        table is dropped.
         
         Args:
             table (string, optional): Name of table to be dropped. Defaults to None.
@@ -442,6 +446,31 @@ class Postgres_Table(Postgres_Connection):
         print(f'Dropping table {table}...')
         self.run_DDL(sql)
   
+    def vaccum_table(self, table=None):
+        """Run Vacuum on a given table.
+
+        If table is None, self.table is dropped. Otherwise, the given 
+        table is dropped.
+        
+        Args:
+            table (string, optional): Name of table to be dropped. Defaults to None.
+        """
+        if table is None:
+            table = self.table
+        sql = f"VACUUM VERBOSE ANALYZE {table}"
+
+        # VACUUM can not run in a transaction block,
+        # which psycopg2 uses by default.
+        # http://bit.ly/1OUbYB3
+        isolation_level = self.conn.isolation_level
+        self.conn.set_isolation_level(0)
+        self.run_DDL(sql)
+
+        # Set our isolation_level back to normal
+        self.conn.set_isolation_level(isolation_level)
+        print(self.conn.notices)
+        return self.conn.notices
+
     def copy_data(self, csv_file):
         """Copy data from CSV file to table.
         
@@ -451,28 +480,27 @@ class Postgres_Table(Postgres_Connection):
         """
         with open(csv_file, 'r') as csv:
             print(f'Copying {csv_file} to {self.table}...')
-            self.conn.cursor().copy_from(csv, self.table, sep=',')
-            self.conn.commit()
+            with self.conn.cursor() as cur:
+                cur.copy_from(csv, self.table, sep=',')
+                self.conn.commit()
 
-    def add_column(self, name, datatype=None, geometry=False, default=None, srid=4326):
+    def add_column(self, name, datatype=None, geometry=False, default=None):
         """Add column to the table with the given datatype and default.
-
-        If geometry if True, set the appropriate SRID.
         
         Args:
-            name (string): Name of the new column
+            name (string): Name of the new column.
             datatype (type, optional): Postgresql/PostGIS datatype. Defaults to None.
             geometry (bool, optional): Whether the datatype is a geometry. Defaults to False.
             default (value, optional): The default value of the column. Should be
                 the same type as datatype. Defaults to None.
-            srid (int, optional): The SRID of the geometry, if True. Defaults to 4326.
         """
+        # Set the default sql strings
         default_str = ''
         datatype_str = f'{datatype}'
 
         # Handle geometry types
         if geometry:
-            datatype_str = f'geometry({datatype}, {srid})'
+            datatype_str = f'geometry({datatype}, {self.srid})'
        
         # Handle default data types
         if default:
@@ -510,12 +538,12 @@ class Postgres_Table(Postgres_Connection):
         if time:
             sql = f"""
                 UPDATE {self.table}
-                SET {name} = ST_SetSRID(ST_MakePointM({lon}, {lat}, {time}), 4326)
+                SET {name} = ST_SetSRID(ST_MakePointM({lon}, {lat}, {time}), {self.srid})
             """
         else:
             sql = f"""
                 UPDATE {self.table}
-                SET {name} = ST_SetSRID(ST_MakePoint({lon}, {lat}), 4326)
+                SET {name} = ST_SetSRID(ST_MakePoint({lon}, {lat}), {self.srid})
             """
         self.run_DDL(sql)
 
@@ -523,9 +551,9 @@ class Postgres_Table(Postgres_Connection):
         """Convert the SRID of the geometry column.
         
         Args:
-            column (sting): Name of the column to project
-            datatype (type): Postgis geometry datatype
-            new_srid (int): Code for the SRID to be projected to
+            column (sting): Name of the column to project.
+            datatype (type): Postgis geometry datatype.
+            new_srid (int): Code for the SRID to project the geometry into.
         """
         sql = f"""
             ALTER TABLE {self.table}
@@ -533,12 +561,19 @@ class Postgres_Table(Postgres_Connection):
             TYPE Geometry({datatype}, {new_srid})
             USING ST_Transform({column}, {new_srid});
         """
-        print(f'Projecting {column} from 4326 to {new_srid}...')
+        print(f'Projecting {column} from {self.srid} to {new_srid}...')
         self.run_DDL(sql)
 
-    def add_index(self, name, field, kind=None):
-        '''Add index to table using the given column.'''
-        if kind in 'gist':
+    def add_index(self, name, field, gist=False):
+        """Add index to table using the given column.
+        
+        Args:
+            name (string): Name of the new index.
+            field (string): Column on which to build the index.
+            kind (boolean, optional): TWhether the index is GiST. 
+                Defaults to False.
+        """
+        if gist:
             kind_str = 'USING GiST'
         else:
             kind_str = ''
@@ -548,12 +583,6 @@ class Postgres_Table(Postgres_Connection):
                 ON {self.table} {kind_str} ({field})
             """
         print(f'Adding index on {field}...')
-        self.run_DDL(sql)
-    
-    def update_index(self, name):
-        '''Add index to table using the given column.'''
-        print('Updating index on {0}...'.format(field))
-        sql = f"""REINDEX Index {name}"""
         self.run_DDL(sql)
 
     def add_local_time(self, input_col="datetime", timezone="america/los_angeles"):
@@ -642,8 +671,7 @@ class Points_Table(Postgres_Table):
                 temp.MMSI = {self.table}.MMSI AND
                 temp.DateTime = {self.table}.DateTime        
         """
-        self.cur.execute(sql)
-        self.conn.commit()
+        self.run_DDL(sql)
 
     def update_time_interval(self):
         '''Add time interval between data points.'''
@@ -662,8 +690,7 @@ class Points_Table(Postgres_Table):
                 temp.MMSI = {self.table}.MMSI AND
                 temp.DateTime = {self.table}.DateTime        
         """
-        self.cur.execute(sql)
-        self.conn.commit()
+        self.run_DLL(sql)
 
     def drop_anomaly(self):
         '''Drop rows that have default SOG/COG values.'''
@@ -672,8 +699,7 @@ class Points_Table(Postgres_Table):
             SOG < 0 AND
             COG = 310.4
         """
-        self.cur.execute(sql)
-        self.conn.commit()
+        self.run_DLL(sql)
 
     def add_geometry(self):
         '''Add PostGIS PointM geometry to the database and make it index.'''
@@ -700,8 +726,8 @@ class Points_Table(Postgres_Table):
                 temp.MMSI = {self.table}.MMSI AND
                 temp.DateTime = {self.table}.DateTime        
         """
-        self.cur.execute(sql)
-        self.conn.commit()
+        self.run_DLL(sql)
+
 
     def add_tss(self, tss):
         '''Add column marking whether the point is in the TSS.'''
@@ -719,7 +745,7 @@ class Points_Table(Postgres_Table):
             WHERE {self.table}.lat=tssTest.lat
             AND {self.table}.lon=tssTest.lon
         """
-        self.cur.execute(sql)
+        self.run_DLL(sql)
         self.conn.commit()
 
 
