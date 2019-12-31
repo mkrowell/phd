@@ -427,6 +427,14 @@ class Points_Table(Postgres_Table):
         self.add_column('geom', datatype='POINTM', geometry=True)
         self.add_point('geom', 'lon', 'lat', "date_part('epoch', datetime)")
 
+    # def add_track(self):
+    #     name = 'Track'
+    #     self.add_column(name, datatype='int')
+    #     sql = f"""
+    #         UPDATE {self.table}
+    #         SET {name}
+    #     """
+
     def add_distance(self):
         '''Add distance between data points.'''
         name = 'Distance'
