@@ -3,8 +3,7 @@
 .. module::
     :language: Python Version 3.6.8
     :platform: Windows 10
-    :synopsis: load NAIS data from MarineCadastre into a postgres database
-    into a raw points table and a tracks table.
+    :synopsis: loaddata into a postgres database
 
 .. moduleauthor:: Maura Rowell <mkrowell@uw.edu>
 '''
@@ -14,13 +13,13 @@
 # IMPORTS
 # ------------------------------------------------------------------------------
 from glob import glob
-from multiprocessing.dummy import Pool
 import numpy as np
 import os
 from os.path import abspath, dirname, exists, join
 import osgeo.ogr
 import pandas as pd
 from postgis.psycopg import register
+import pprint
 import psycopg2
 from psycopg2 import sql
 from retrying import retry
@@ -33,335 +32,17 @@ import yaml
 from . import time_all
 
 
-
-
-# ------------------------------------------------------------------------------
-# MAIN CLASS
-# ------------------------------------------------------------------------------
-@time_all
-class NAIS_Database(object):
-
-    '''
-    Build PostgreSQL database of NAIS point data.
-    '''
-
-    def __init__(self, city, year):
-        # arguments
-        self.city = city
-        self.year = year
-        self.password = password
-
-        # file parameters
-        self.root = tempfile.mkdtemp()
-        self.nais_file = join(self.root, 'AIS_All.csv')
-
-        # spatial parameters
-        param_yaml = join(dirname(__file__), 'settings.yaml')
-        with open(param_yaml, 'r') as stream:
-            self.parameters = yaml.safe_load(stream)[self.city]
-
-        self.zone = self.parameters['zone']
-        self.lonMin = self.parameters['lonMin']
-        self.lonMax = self.parameters['lonMax']
-        self.latMin = self.parameters['latMin']
-        self.latMax = self.parameters['latMax']
-        self.srid = self.parameters['srid']
-
-        # time parameters
-        # self.months = [str(i).zfill(2) for i in range(1, 13)]
-        self.months = ['01']
-
-        # database parameters
-        self.conn = psycopg2.connect(
-            host='localhost',
-            dbname='postgres',
-            user='postgres',
-            password=self.password)
-
-        # Add functions to database
-        sql = """
-            CREATE OR REPLACE FUNCTION normalize_angle(
-                angle FLOAT,
-                range_start FLOAT,
-                range_end FLOAT)
-            RETURNS FLOAT AS $$
-            BEGIN
-                RETURN (angle - range_start) - FLOOR((angle - range_start)/(range_end - range_start))*(range_end - range_start) + range_start;
-            END; $$
-            LANGUAGE PLPGSQL;
-
-            CREATE OR REPLACE FUNCTION angle_difference(
-                angle1 FLOAT,
-                angle2 FLOAT)
-            RETURNS FLOAT AS $$
-            BEGIN
-                RETURN DEGREES(ATAN2(
-                    SIN(RADIANS(angle1) - RADIANS(angle2)),
-                    COS(RADIANS(angle1) - RADIANS(angle2))
-                ));
-            END; $$
-            LANGUAGE PLPGSQL
-        """
-        self.conn.cursor().execute(sql)
-        self.conn.commit()
-
-        # Add SRID
-        self.conn.cursor().execute(self.srid)
-        self.conn.commit()
-
-        # environment
-        # self.table_shore = Shapefile_Table(
-        #     self.conn,
-        #     'shore'
-        # )
-        # self.table_tss = Shapefile_Table(
-        #     self.conn,
-        #     'tss'
-        # )
-
-        # eda
-        # self.table_eda = EDA_Table(
-        #     self.conn,
-        #     'eda_points_{0}'.format(self.city)
-        # )
-        # self.table_eda_tracks_mmsi = Tracks_Table(
-        #     self.conn,
-        #     'eda_tracks_mmsi_{0}'.format(self.city)
-        # )
-        # self.table_eda_tracks_trajectory = Tracks_Table(
-        #     self.conn,
-        #     'eda_tracks_trajectory_{0}'.format(self.city)
-        # )
-
-
-
-        # self.table_points = Points_Table(
-        #     self.conn,
-        #     'points_{0}'.format(self.city)
-        # )
-        # self.table_cpas = CPA_Table(
-        #     self.conn,
-        #     'cpa_{0}'.format(self.city),
-        #     self.table_points.table
-        # )
-
-
-        # self.table_tracks = Tracks_Table(
-        #     self.conn,
-        #     'tracks_{0}'.format(self.city)
-        # )
-        # self.table_cpa = CPA_Table(
-        #     self.conn,
-        #     'cpa_{0}'.format(self.city),
-        #     self.table_tracks.table,
-        #     self.table_shore.table
-        # )
-
-        # # Encounters
-        # self.table_encounters = Encounters_Table(
-        #     self.conn,
-        #     'encounters_{0}_cog'.format(self.city),
-        #     self.table_points.table,
-        #     self.table_cpa.table
-        # )
-        #
-        #
-
-
-
-
-
-
-        # self.table_crossing = Crossing_Table(
-        #     self.conn,
-        #     'crossing_{0}'.format(self.city),
-        #     self.table_analysis.table
-        # )
-        # self.table_overtaking = Overtaking_Table(
-        #     self.conn,
-        #     'overtaking_{0}'.format(self.city),
-        #     self.table_analysis.table
-        # )
-
-    @property
-    def nais_csvs(self):
-        return glob(self.root + '\\AIS*.csv')
-
-    # BUILD DATABASE -----------------------------------------------------------
-    # def build_tables(self):
-    #     '''Build database of raw data.'''
-    #     start = time.time()
-    #     try:
-    #         # Points
-    #         # self.build_nais_points()
-
-    #         # Tracks
-    #         # self.build_nais_tracks()
-
-    #         # CPAsdf
-    #         # self.build_nais_cpas()
-
-    #         # Analysis
-    #         # self.build_nais_encounters()
-    #         # self.build_nais_analysis()
-
-    #     except Exception as err:
-    #         print(err)
-    #         self.conn.rollback()
-    #         self.conn.close()
-    #     finally:
-    #         shutil.rmtree(self.root)
-    #         end = time.time()
-    #         print('Elapsed Time: {0} minutes'.format((end-start)/60))
-
-  
-
-  
-
-    def build_nais_eda(self):
-        '''Build nais exploratory data analysis table.'''
-        # Download and process raw AIS data from MarineCadastre.gov
-        # if not exists(self.nais_file):
-        #     raw = NAIS_Download(self.root, self.city, self.year)
-        #     for month in self.months:
-        #         raw.download_nais(month)
-        #     raw.clean_up()
-        #     raw.preprocess_eda()
-
-        # Create table
-        self.table_eda.drop_table()
-        self.table_eda.create_table()
-        self.table_eda.copy_data(self.nais_file)
-        self.table_eda.add_local_time()
-
-        # Add postgis point and project to UTM 10 SRID
-        self.table_eda.add_geometry()
-        self.table_eda.project_column('geom', 'POINTM', 32610)
-        self.table_eda.add_index("idx_geom", "geom", type="gist")
-
-        # Make tracks on MMSI only and on MMSI, Trajectory
-        points = self.table_eda.table
-        self.table_eda_tracks_mmsi.drop_table()
-        self.table_eda_tracks_mmsi.convert_to_tracks(points, groupby='mmsi, type')
-        self.table_eda_tracks_trajectory.drop_table()
-        self.table_eda_tracks_trajectory.convert_to_tracks(points, groupby='mmsi, trajectory, type')
-
-
-
-    def build_nais_points(self):
-        '''Build nais points table.'''
-        # Create table
-        self.table_points.drop_table()
-        self.table_points.create_table()
-        self.table_points.copy_data(self.nais_file)
-
-        # Add postgis point and project to UTM 10 SRID
-        self.table_points.add_geometry()
-        self.table_points.project_column('geom', 'POINTM', 32610)
-        self.table_points.add_index("idx_geom", "geom")
-        self.table_points.add_tss(self.table_tss.table)
-
-        # Add time index for join
-        self.table_points.add_index("idx_time", "datetime")
-
-    def build_nais_interactions(self):
-        '''Join points to points to get CPA.'''
-        self.table_cpas.drop_table()
-
-        # Join points to points and select closest CPAs
-        self.table_cpas.points_points()
-        self.table_cpas.add_index("idx_distance", "cpa_distance")
-        self.table_cpas.reduce_table('cpa_distance', '>=', 0.5*1852)
-
-        # Add rank to duplicates
-        self.table_cpas.add_index("idx_mmsi", "mmsi1")
-        self.table_cpas.add_duplicate_rank()
-
-        # Select the 20 points around the CPA
-        self.table_cpas.cpa_range()
-        self.table_cpas.cpa_attributes()
-
-        # Add encounter type
-        self.table_cpas.encounter_type()
-
-    def build_nais_tracks(self):
-        '''Create tracks table from points table.'''
-        print('Constructing nais_tracks table...')
-        self.table_tracks.drop_table()
-        self.table_tracks.convert_to_tracks(self.table_points.table)
-
-        self.table_tracks.add_index("idx_gist_period", "period", type="gist")
-        self.table_tracks.add_index("idx_duration", "duration")
-
-        self.table_tracks.reduce_table('duration', '<=', '00:30:00')
-
-    def build_nais_cpas(self):
-        '''Create table to generate pair-wise cpa.'''
-        self.table_cpa.drop_table()
-
-        # Join tracks pairwise
-        self.table_cpa.tracks_tracks()
-        self.table_cpa.remove_null('cpa_epoch')
-
-        # Add CPA attributes
-        self.table_cpa.cpa_time()
-        self.table_cpa.cpa_points()
-        self.table_cpa.cpa_distance()
-
-        self.table_cpa.add_index("idx_distance", "point_distance")
-        self.table_cpa.reduce_table('point_distance','>',  3*1852)
-
-        # Remove cpas that cross the shore
-        self.table_cpa.cpa_line()
-        self.table_cpa.delete_shore_cross()
-
-        # Add rank to duplicate interactions
-        self.table_cpa.add_duplicate_rank()
-
-    def build_nais_encounters(self):
-        '''Add point data to cpa instances.'''
-        self.table_encounters.drop_table()
-
-        # Add point data to CPA
-        self.table_encounters.cpa_points()
-
-        # Get encounter type
-        self.table_encounters.encounter_type()
-        self.table_encounters.check_nearby()
-
-        # Add encounter info
-        self.table_encounters.giveway_info()
-        self.table_encounters.dcpa()
-        self.table_encounters.tcpa()
-
-
-
-
-
-
-
-
-#         # plot every encounter cog v time, sog v time, step_cog v tcpa
-#
-# fig = plt.figure()
-# ax = fig.add_subplot(111, projection='polar')
-# ax.set_rlabel_position(135)
-# ax.set_theta_zero_location('N')
-# ax.set_theta_direction(-1)
-# c = ax.scatter(np.radians(overtaking['bearing12']), overtaking['distance'], c=np.radians(overtaking['bearing12']), cmap='hsv', alpha=0.75)
-#
-
 # ------------------------------------------------------------------------------
 # BASE CLASSES
 # ------------------------------------------------------------------------------
-@time_all
 class Postgres_Connection(object):
 
-    '''
-    Create standard connection to the postgres database.
-    '''
+    """
+    Open/close standard connection to the postgres database.
+    """
 
-    def __init__(self, table):
+    def __init__(self):
+        # Create connection object to Postgres
         self.conn = psycopg2.connect(
             host='localhost',
             dbname='postgres',
@@ -369,128 +50,267 @@ class Postgres_Connection(object):
             password=os.environ['PGPASSWORD']
         )
 
-        # Create default cursor
-        self.table = table
-        self.cur = self.conn.cursor()
+        # Set standard properties and extensions
+        with self.conn.cursor() as cur:
+            cur.execute("SET timezone = 'UTC'")
+            cur.execute("CREATE EXTENSION IF NOT EXISTS postgis")
+            self.conn.commit()
 
         # Enable PostGIS extension
-        self.cur.execute("CREATE EXTENSION IF NOT EXISTS postgis")
-        self.conn.commit()
         register(self.conn)
 
-        # Set timezone to UTC
-        self.cur.execute("SET timezone = 'UTC'")
-        self.conn.commit()
+    def close_connection(self):
+        """
+        Close the database connection, if open.
+        """
+        if self.conn:
+            self.conn.close()
+            print('Database connection closed.')
 
 class Postgres_Table(Postgres_Connection):
 
+    """
+    Base class for Postgres tables. 
+    """
+
     def __init__(self, table):
-        '''Connect to default database.'''
-        super(Postgres_Table, self).__init__(table)
+        super(Postgres_Table, self).__init__()
+        self.table = table
+        self.srid = 4326
+
+    def run_DDL(self, query):
+        """
+        Execute a DDL SQL statement and commit it to the database.
+        
+        Args:
+            query (string): A Data Definition Language SQL statement.
+        """
+        del self.conn.notices[:]
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(query)
+                self.conn.commit()
+        except psycopg2.DatabaseError as err:
+            print(err)
+            raise err
+        finally:
+            if len(self.conn.notices):
+                print(f"Notices: {self.conn.notices}")
+
+    def query_cost(self, query):
+        sql = f"EXPLAIN COST {query}"
+        self.run_DLL(sql)
+        
+    def create_table(self, filepath=None, columns=None):
+        """
+        Create table in the database.
+
+        If filepath is provided, the shp2pgsql utility will be used 
+        to create table from the file. Otherwise, an empty table will
+        be created with provided columns.
+        
+        Args:
+            filepath (string, optional): Path to the shapefile that is to 
+                be created as a table. Defaults to None.
+            columns (string, optional): SQL statement defining the columns 
+                of the table. Defaults to None.
+        """
+        if filepath:
+            print(f'Constructing {self.table} from {filepath}...')
+            cmd = f'"C:\\Program Files\\PostgreSQL\\12\\bin\\shp2pgsql.exe" -s 4326 -d {filepath} {self.table} | C:\\OSGEO4w\Bin\psql -d postgres -U postgres -q'
+            subprocess.call(cmd, shell=True)
+        elif columns:
+            print(f'Constructing {self.table} from columns...')
+            sql = f'CREATE TABLE IF NOT EXISTS {self.table} ({columns})'
+            self.run_DDL(sql)
+        else:
+            raise UserWarning('You must provide a filepath or column defintions.')
 
     def drop_table(self, table=None):
-        '''Drop the table if it exists.'''
+        """
+        Drop the table from the database, if it exists.
+
+        If table is None, self.table is dropped. Otherwise, the given 
+        table is dropped.
+        
+        Args:
+            table (string, optional): Name of table to be dropped. Defaults to None.
+        """
         if table is None:
             table = self.table
         sql = f'DROP TABLE IF EXISTS {table}'
-
         print(f'Dropping table {table}...')
-        self.cur.execute(sql)
-        self.conn.commit()
-
-    def drop_column(self, column):
-        '''Drop the column if it exists.'''
-        sql = f"""
-            ALTER TABLE {self.table}
-            DROP COLUMN IF EXISTS {column}
+        self.run_DDL(sql)
+  
+    def vaccum_table(self, table=None):
         """
+        Run Vacuum on a given table.
 
-        print(f'Dropping column {column}...')
-        self.cur.execute(sql)
-        self.conn.commit()
+        If table is None, self.table is vaccumed. Otherwise, the given 
+        table is vaccumed.
+        
+        Args:
+            table (string, optional): Name of table to be vacumed. Defaults to None.
+        """
+        if table is None:
+            table = self.table
+        sql = f"VACUUM VERBOSE ANALYZE {table}"
+
+        # VACUUM can not run in a transaction block,
+        # which psycopg2 uses by default.
+        # http://bit.ly/1OUbYB3
+        isolation_level = self.conn.isolation_level
+        self.conn.set_isolation_level(0)
+        self.run_DDL(sql)
+
+        # Set our isolation_level back to normal
+        self.conn.set_isolation_level(isolation_level)
 
     def copy_data(self, csv_file):
-        '''Copy data into table.'''
-        with open(csv_file, 'r') as f:
-            print(f'Copying {csv_file} to database...')
-            self.cur.copy_from(f, self.table, sep=',')
-            self.conn.commit()
+        """
+        Copy data from CSV file to table.
+        
+        Args:
+            csv_file (string): Filepath to the csv data 
+                that is to be copied into the table.
+        """
+        with open(csv_file, 'r') as csv:
+            print(f'Copying {csv_file} to {self.table}...')
+            with self.conn.cursor() as cur:
+                cur.copy_from(csv, self.table, sep=',')
+                self.conn.commit()
 
-    def create_table(self, filepath=None):
-        '''Create given table.'''
-        print(f'Constructing {self.table}...')
-        if filepath:
-            cmd = f'"C:\\Program Files\\PostgreSQL\\12\\bin\\shp2pgsql.exe" -s 4326 -d {filepath} {self.table} | psql -d postgres -U postgres -q'
-            subprocess.call(cmd, shell=True)
-        else:
-            sql = f"""
-                CREATE TABLE IF NOT EXISTS {self.table} ({self.columns})
-            """
-            self.cur.execute(sql)
-            self.conn.commit()
-
-    def add_index(self, name, field, type=None):
-        '''Add index to table using the given column.'''
-        print('Adding index on {0}...'.format(field))
-        if type is None:
-            sql = """
-                CREATE INDEX IF NOT EXISTS {0}
-                ON {1} ({2})
-            """
-        if type == 'gist':
-            sql = """
-                CREATE INDEX IF NOT EXISTS {0}
-                ON {1} USING GiST ({2})
-            """
-        self.cur.execute(sql.format(name, self.table, field))
-        self.conn.commit()
-
-    def add_column(self, name, datatype=None, geometry=False, default=None, srid=4326):
-        '''Add column with datatype to the table.'''
-        print(f'Adding {name} ({datatype}) to {self.table}...')
-        sql_alter = """
-            ALTER TABLE {0}
-            ADD COLUMN IF NOT EXISTS {1}
-        """.format(self.table, name)
+    def add_column(self, name, datatype=None, geometry=False, default=None):
+        """
+        Add column to the table with the given datatype and default.
+        
+        Args:
+            name (string): Name of the new column.
+            datatype (type, optional): Postgresql/PostGIS datatype. Defaults to None.
+            geometry (bool, optional): Whether the datatype is a geometry. Defaults to False.
+            default (value, optional): The default value of the column. Should be
+                the same type as datatype. Defaults to None.
+        """
+        # Set the default sql strings
+        default_str = ''
+        datatype_str = f'{datatype}'
 
         # Handle geometry types
-        sql_type = """ {0} """
         if geometry:
-            sql_type = """ geometry({0}, {1}) """
-        sql = sql_alter + sql_type.format(datatype, srid)
-
+            datatype_str = f'geometry({datatype}, {self.srid})'
+       
         # Handle default data types
         if default:
-            sql_default = """DEFAULT {0}"""
-            sql = sql + sql_default.format(default)
+            default_str = f'DEFAULT {default}'
 
-        self.cur.execute(sql)
-        self.conn.commit()
+        # Entire SQL string
+        sql = f"""
+            ALTER TABLE {self.table} 
+            ADD COLUMN IF NOT EXISTS {name} {datatype_str}
+            {default_str}
+        """
+
+        print(f'Adding {name} ({datatype}) to {self.table}...')
+        self.run_DDL(sql)
+
+    def drop_column(self, column):
+        """
+        Drop column from the table, if column exists.
+        
+        Args:
+            column (string): Name of the column to be dropped.
+        """
+        sql = f'ALTER TABLE {self.table} DROP COLUMN IF EXISTS {column}'
+        print(f'Dropping column {column}...')
+        self.run_DDL(sql)
 
     def add_point(self, name, lon, lat, time=None):
-        '''Add point geometry to column.'''
+        """
+        Make the given column a POINT/POINTM geometry.
+        
+        Args:
+            name (string): Name of existing column to be made into Point geometry.
+            lon (string): Name of the column containing the longitude of Point.
+            lat (string): Name of the column containing the latitude of Point.
+            time (string, optional): Name of the column containing the latitude of Point. Defaults to None.
+        """
         if time:
-            sql = """
-                UPDATE {0}
-                SET {1} = ST_SetSRID(ST_MakePointM({2}, {3}, {4}), 4326)
-            """.format(self.table, name, lon, lat, time)
+            sql = f"""
+                UPDATE {self.table}
+                SET {name} = ST_SetSRID(ST_MakePointM({lon}, {lat}, {time}), {self.srid})
+            """
         else:
-            sql = """
-                UPDATE {0}
-                SET {1} = ST_SetSRID(ST_MakePoint({2}, {3}), 4326)
-            """.format(self.table, name, lon, lat)
-        self.cur.execute(sql)
-        self.conn.commit()
+            sql = f"""
+                UPDATE {self.table}
+                SET {name} = ST_SetSRID(ST_MakePoint({lon}, {lat}), {self.srid})
+            """
+        self.run_DDL(sql)
 
     def project_column(self, column, datatype, new_srid):
-        '''Transform projection.'''
-        print('Projecting {0} from 4326 to {1}...'.format(column, new_srid))
-        sql = """
-            ALTER TABLE {table}
+        """
+        Convert the SRID of the geometry column.
+        
+        Args:
+            column (sting): Name of the column to project.
+            datatype (type): Postgis geometry datatype.
+            new_srid (int): Code for the SRID to project the geometry into.
+        """
+        sql = f"""
+            ALTER TABLE {self.table}
             ALTER COLUMN {column}
             TYPE Geometry({datatype}, {new_srid})
-            USING ST_Transform({column}, {new_srid});
-        """.format(table=self.table, column=column, datatype=datatype, new_srid=new_srid)
+            USING ST_Transform({column}, {new_srid})
+        """
+        print(f'Projecting {column} from {self.srid} to {new_srid}...')
+        self.run_DDL(sql)
+
+    def add_index(self, name, field=None, gist=False):
+        """
+        Add index to table using the given field. If field
+        is None, update the existing column.
+        
+        Args:
+            name (string): Name of the new index. Default None.
+            field (string, optional): Column on which to build the index.
+            kind (boolean, optional): Whether the index is GiST. 
+                Defaults to False.
+        """
+        if field is None:
+            sql = f"REINDEX {name}"
+            print(f'Updating index on {field}...')
+        else:
+            if gist:
+                kind_str = 'USING GiST'
+            else:
+                kind_str = ''
+
+            sql = f"""
+                    CREATE INDEX IF NOT EXISTS {name}
+                    ON {self.table} {kind_str} ({field})
+                """
+            print(f'Adding index on {field}...')
+        self.run_DDL(sql)
+
+    def reduce_table(self, column, relationship, value):
+        """
+        Dp rows that meet condition.
+        
+        Args:
+            column (string):column to test condition on.
+            relationship (string): =, <, > !=, etc.
+            value (string, number): value to use in condition.
+        """
+        print(f'Dropping {column} {relationship} {value} from {self.table}...')
+        if isinstance(value, str):
+            sql_delete = "DELETE FROM {0} WHERE {1} {2} '{3}'"
+        else:
+            sql_delete = "DELETE FROM {0} WHERE {1} {2} {3}"
+        sql = sql_delete.format(self.table, column, relationship, value)
+        self.run_DDL(sql)
+        
+    def remove_null(self, col):
+        print(f'Deleting null rows from {self.table}...')
+        sql = f"""DELETE FROM {self.table} WHERE {col} IS NULL"""
         self.cur.execute(sql)
         self.conn.commit()
 
@@ -502,23 +322,6 @@ class Postgres_Table(Postgres_Connection):
             UPDATE {self.table}
             SET {name} = {input_col} at time zone 'utc' at time zone '{timezone}'
         """
-        self.cur.execute(sql)
-        self.conn.commit()
-
-    def reduce_table(self, column, relationship, value):
-        '''Drop rows that meet condition.'''
-        print(f'Dropping {column} {relationship} {value} from {self.table}...')
-        if isinstance(value, str):
-            sql_delete = "DELETE FROM {0} WHERE {1} {2} '{3}'"
-        else:
-            sql_delete = "DELETE FROM {0} WHERE {1} {2} {3}"
-        sql = sql_delete.format(self.table, column, relationship, value)
-        self.cur.execute(sql)
-        self.conn.commit()
-
-    def remove_null(self, col):
-        print(f'Deleting null rows from {self.table}...')
-        sql = f"""DELETE FROM {self.table} WHERE {col} IS NULL"""
         self.cur.execute(sql)
         self.conn.commit()
 
@@ -537,16 +340,19 @@ class Postgres_Table(Postgres_Connection):
         column_names = [desc[0] for desc in self.cur.description]
         return pd.DataFrame(self.cur.fetchall(), columns=column_names)
 
-
-
-
+ 
 # ------------------------------------------------------------------------------
 # NAIS CLASSES
 # ------------------------------------------------------------------------------
 class Points_Table(Postgres_Table):
 
     def __init__(self, table):
-        '''Connect to default database.'''
+        """
+        Connect to default database and set table schema.
+        
+        Args:
+            table (string): Name of table.
+        """
         super(Points_Table, self).__init__(table)
         self.columns = """
             MMSI integer NOT NULL,
@@ -560,37 +366,74 @@ class Points_Table(Postgres_Table):
             VesselType varchar(64),
             Status varchar(64),
             Length float(4),
-            In_Bound boolean
+            In_Bound boolean,
+            PRIMARY KEY(MMSI, DateTime)
         """
 
-        self.window_mmsi = '(PARTITION BY MMSI ORDER BY DateTime)'
+        self.window_mmsi = '(PARTITION BY MMSI ORDER BY DateTime ASC)'
 
-    def add_time_interval(self):
-        '''Add time interval between data points.'''
-        name = 'TimeInterval'
-        self.add_column(name, datatype='interval', default="'0 seconds'")
+    def window_column(self, name, window_query):
+        """
+        Allows column assignment using a window functions.
+        
+        Args:
+            name (string): Name of column to update
+            select_query (string): Expression to apply the window to
+        """
         sql = f"""
             UPDATE {self.table}
-            SET {name} = temp.Interval
+            SET {name} = temp.SubQueryColumn
             FROM (
                 SELECT 
                     MMSI,
                     DateTime,
-                    DateTime - LAG(DateTime, 1) OVER {self.window_mmsi} AS Interval
+                    {window_query} OVER {self.window_mmsi} AS SubQueryColumn
                 FROM {self.table}
             ) AS temp
             WHERE 
                 temp.MMSI = {self.table}.MMSI AND
                 temp.DateTime = {self.table}.DateTime        
         """
-        self.cur.execute(sql)
-        self.conn.commit()
+        return sql
+
+    def add_time_interval(self):
+        """Add time interval between data points.
+        """
+        name = 'TimeInterval'
+        self.add_column(name, datatype='interval', default="'0 seconds'")
+        window_sql = 'DateTime - LAG(DateTime, 1)'
+        self.run_DDL(self.window_column(name, window_sql))
+
+    def drop_anomaly(self):
+        """
+        Drop rows that have default SOG/COG values.
+        """
+        sql = f"""
+            DELETE FROM {self.table} WHERE 
+            SOG < 0 AND
+            COG = 310.4
+        """
+        self.run_DDL(sql)
+        sql_sog = f"""
+            DELETE FROM {self.table} WHERE 
+            SOG < 0
+        """
+        self.run_DDL(sql_sog)
 
     def add_geometry(self):
-        '''Add PostGIS PointM geometry to the database and make it index.'''
+        """
+        PostGIS PointM geometry to the database.
+        """
         self.add_column('geom', datatype='POINTM', geometry=True)
         self.add_point('geom', 'lon', 'lat', "date_part('epoch', datetime)")
-        # self.add_point('geom', 'lon', 'lat', "date_part('epoch', datetime_local)")
+
+    # def add_track(self):
+    #     name = 'Track'
+    #     self.add_column(name, datatype='int')
+    #     sql = f"""
+    #         UPDATE {self.table}
+    #         SET {name}
+    #     """
 
     def add_distance(self):
         '''Add distance between data points.'''
@@ -611,29 +454,8 @@ class Points_Table(Postgres_Table):
                 temp.MMSI = {self.table}.MMSI AND
                 temp.DateTime = {self.table}.DateTime        
         """
-        self.cur.execute(sql)
-        self.conn.commit()
+        self.run_DLL(sql)
 
-    def add_distance_derived(self):
-        '''Add distance between data points.'''
-        name = 'DistanceDerived'
-        self.add_column(name, datatype='float(4)', default=0)
-        sql = f"""
-            UPDATE {self.table}
-            SET {name} = temp.Distance
-            FROM (
-                SELECT 
-                    MMSI,
-                    DateTime,
-                    SOG*EXTRACT(epoch FROM TimeInterval)/3600 AS Distance
-                FROM {self.table}
-            ) AS temp
-            WHERE 
-                temp.MMSI = {self.table}.MMSI AND
-                temp.DateTime = {self.table}.DateTime        
-        """
-        self.cur.execute(sql)
-        self.conn.commit()
 
     def add_tss(self, tss):
         '''Add column marking whether the point is in the TSS.'''
@@ -651,31 +473,9 @@ class Points_Table(Postgres_Table):
             WHERE {self.table}.lat=tssTest.lat
             AND {self.table}.lon=tssTest.lon
         """
-        self.cur.execute(sql)
+        self.run_DLL(sql)
         self.conn.commit()
 
-
-class EDA_Table(Postgres_Table):
-
-    def __init__(self, conn, table):
-        '''Connect to default database.'''
-        super(EDA_Table, self).__init__(conn, table)
-        self.cur = self.conn.cursor()
-        self.columns = """
-            MMSI integer NOT NULL,
-            DateTime timestamptz NOT NULL,
-            Trajectory integer NOT NULL,
-            LAT float8 NOT NULL,
-            LON float8 NOT NULL,
-            SOG float(4) NOT NULL,
-            COG float(4) NOT NULL,
-            VesselType varchar(64)
-        """
-
-    def add_geometry(self):
-        '''Add PostGIS PointM geometry to the database and make it index.'''
-        self.add_column('geom', datatype='POINTM', geometry=True)
-        self.add_point('geom', 'lon', 'lat', "date_part('epoch', datetime)")
 
 class Tracks_Table(Postgres_Table):
 
@@ -1590,3 +1390,311 @@ class Encounters_Table(Postgres_Table):
     #     self.cur.execute(sql)
     #     self.conn.commit()
     #
+
+# ------------------------------------------------------------------------------
+# MAIN CLASS
+# ------------------------------------------------------------------------------
+@time_all
+class NAIS_Database(object):
+
+    '''
+    Build PostgreSQL database of NAIS point data.
+    '''
+
+    def __init__(self, city, year):
+        # arguments
+        self.city = city
+        self.year = year
+        self.password = password
+
+        # file parameters
+        self.root = tempfile.mkdtemp()
+        self.nais_file = join(self.root, 'AIS_All.csv')
+
+        # spatial parameters
+        param_yaml = join(dirname(__file__), 'settings.yaml')
+        with open(param_yaml, 'r') as stream:
+            self.parameters = yaml.safe_load(stream)[self.city]
+
+        self.zone = self.parameters['zone']
+        self.lonMin = self.parameters['lonMin']
+        self.lonMax = self.parameters['lonMax']
+        self.latMin = self.parameters['latMin']
+        self.latMax = self.parameters['latMax']
+        self.srid = self.parameters['srid']
+
+        # time parameters
+        # self.months = [str(i).zfill(2) for i in range(1, 13)]
+        self.months = ['01']
+
+        # database parameters
+        self.conn = psycopg2.connect(
+            host='localhost',
+            dbname='postgres',
+            user='postgres',
+            password=self.password)
+
+        # Add functions to database
+        sql = """
+            CREATE OR REPLACE FUNCTION normalize_angle(
+                angle FLOAT,
+                range_start FLOAT,
+                range_end FLOAT)
+            RETURNS FLOAT AS $$
+            BEGIN
+                RETURN (angle - range_start) - FLOOR((angle - range_start)/(range_end - range_start))*(range_end - range_start) + range_start;
+            END; $$
+            LANGUAGE PLPGSQL;
+
+            CREATE OR REPLACE FUNCTION angle_difference(
+                angle1 FLOAT,
+                angle2 FLOAT)
+            RETURNS FLOAT AS $$
+            BEGIN
+                RETURN DEGREES(ATAN2(
+                    SIN(RADIANS(angle1) - RADIANS(angle2)),
+                    COS(RADIANS(angle1) - RADIANS(angle2))
+                ));
+            END; $$
+            LANGUAGE PLPGSQL
+        """
+        self.conn.cursor().execute(sql)
+        self.conn.commit()
+
+        # Add SRID
+        self.conn.cursor().execute(self.srid)
+        self.conn.commit()
+
+       
+
+        # eda
+        # self.table_eda = EDA_Table(
+        #     self.conn,
+        #     'eda_points_{0}'.format(self.city)
+        # )
+        # self.table_eda_tracks_mmsi = Tracks_Table(
+        #     self.conn,
+        #     'eda_tracks_mmsi_{0}'.format(self.city)
+        # )
+        # self.table_eda_tracks_trajectory = Tracks_Table(
+        #     self.conn,
+        #     'eda_tracks_trajectory_{0}'.format(self.city)
+        # )
+
+
+
+        # self.table_points = Points_Table(
+        #     self.conn,
+        #     'points_{0}'.format(self.city)
+        # )
+        # self.table_cpas = CPA_Table(
+        #     self.conn,
+        #     'cpa_{0}'.format(self.city),
+        #     self.table_points.table
+        # )
+
+
+        # self.table_tracks = Tracks_Table(
+        #     self.conn,
+        #     'tracks_{0}'.format(self.city)
+        # )
+        # self.table_cpa = CPA_Table(
+        #     self.conn,
+        #     'cpa_{0}'.format(self.city),
+        #     self.table_tracks.table,
+        #     self.table_shore.table
+        # )
+
+        # # Encounters
+        # self.table_encounters = Encounters_Table(
+        #     self.conn,
+        #     'encounters_{0}_cog'.format(self.city),
+        #     self.table_points.table,
+        #     self.table_cpa.table
+        # )
+        #
+        #
+
+
+
+
+
+
+        # self.table_crossing = Crossing_Table(
+        #     self.conn,
+        #     'crossing_{0}'.format(self.city),
+        #     self.table_analysis.table
+        # )
+        # self.table_overtaking = Overtaking_Table(
+        #     self.conn,
+        #     'overtaking_{0}'.format(self.city),
+        #     self.table_analysis.table
+        # )
+
+    @property
+    def nais_csvs(self):
+        return glob(self.root + '\\AIS*.csv')
+
+    # BUILD DATABASE -----------------------------------------------------------
+    # def build_tables(self):
+    #     '''Build database of raw data.'''
+    #     start = time.time()
+    #     try:
+    #         # Points
+    #         # self.build_nais_points()
+
+    #         # Tracks
+    #         # self.build_nais_tracks()
+
+    #         # CPAsdf
+    #         # self.build_nais_cpas()
+
+    #         # Analysis
+    #         # self.build_nais_encounters()
+    #         # self.build_nais_analysis()
+
+    #     except Exception as err:
+    #         print(err)
+    #         self.conn.rollback()
+    #         self.conn.close()
+    #     finally:
+    #         shutil.rmtree(self.root)
+    #         end = time.time()
+    #         print('Elapsed Time: {0} minutes'.format((end-start)/60))
+
+  
+
+  
+
+    def build_nais_eda(self):
+        '''Build nais exploratory data analysis table.'''
+        # Download and process raw AIS data from MarineCadastre.gov
+        # if not exists(self.nais_file):
+        #     raw = NAIS_Download(self.root, self.city, self.year)
+        #     for month in self.months:
+        #         raw.download_nais(month)
+        #     raw.clean_up()
+        #     raw.preprocess_eda()
+
+        # Create table
+        self.table_eda.drop_table()
+        self.table_eda.create_table()
+        self.table_eda.copy_data(self.nais_file)
+        self.table_eda.add_local_time()
+
+        # Add postgis point and project to UTM 10 SRID
+        self.table_eda.add_geometry()
+        self.table_eda.project_column('geom', 'POINTM', 32610)
+        self.table_eda.add_index("idx_geom", "geom", type="gist")
+
+        # Make tracks on MMSI only and on MMSI, Trajectory
+        points = self.table_eda.table
+        self.table_eda_tracks_mmsi.drop_table()
+        self.table_eda_tracks_mmsi.convert_to_tracks(points, groupby='mmsi, type')
+        self.table_eda_tracks_trajectory.drop_table()
+        self.table_eda_tracks_trajectory.convert_to_tracks(points, groupby='mmsi, trajectory, type')
+
+
+
+    def build_nais_points(self):
+        '''Build nais points table.'''
+        # Create table
+        self.table_points.drop_table()
+        self.table_points.create_table()
+        self.table_points.copy_data(self.nais_file)
+
+        # Add postgis point and project to UTM 10 SRID
+        self.table_points.add_geometry()
+        self.table_points.project_column('geom', 'POINTM', 32610)
+        self.table_points.add_index("idx_geom", "geom")
+        self.table_points.add_tss(self.table_tss.table)
+
+        # Add time index for join
+        self.table_points.add_index("idx_time", "datetime")
+
+    def build_nais_interactions(self):
+        '''Join points to points to get CPA.'''
+        self.table_cpas.drop_table()
+
+        # Join points to points and select closest CPAs
+        self.table_cpas.points_points()
+        self.table_cpas.add_index("idx_distance", "cpa_distance")
+        self.table_cpas.reduce_table('cpa_distance', '>=', 0.5*1852)
+
+        # Add rank to duplicates
+        self.table_cpas.add_index("idx_mmsi", "mmsi1")
+        self.table_cpas.add_duplicate_rank()
+
+        # Select the 20 points around the CPA
+        self.table_cpas.cpa_range()
+        self.table_cpas.cpa_attributes()
+
+        # Add encounter type
+        self.table_cpas.encounter_type()
+
+    def build_nais_tracks(self):
+        '''Create tracks table from points table.'''
+        print('Constructing nais_tracks table...')
+        self.table_tracks.drop_table()
+        self.table_tracks.convert_to_tracks(self.table_points.table)
+
+        self.table_tracks.add_index("idx_gist_period", "period", type="gist")
+        self.table_tracks.add_index("idx_duration", "duration")
+
+        self.table_tracks.reduce_table('duration', '<=', '00:30:00')
+
+    def build_nais_cpas(self):
+        '''Create table to generate pair-wise cpa.'''
+        self.table_cpa.drop_table()
+
+        # Join tracks pairwise
+        self.table_cpa.tracks_tracks()
+        self.table_cpa.remove_null('cpa_epoch')
+
+        # Add CPA attributes
+        self.table_cpa.cpa_time()
+        self.table_cpa.cpa_points()
+        self.table_cpa.cpa_distance()
+
+        self.table_cpa.add_index("idx_distance", "point_distance")
+        self.table_cpa.reduce_table('point_distance','>',  3*1852)
+
+        # Remove cpas that cross the shore
+        self.table_cpa.cpa_line()
+        self.table_cpa.delete_shore_cross()
+
+        # Add rank to duplicate interactions
+        self.table_cpa.add_duplicate_rank()
+
+    def build_nais_encounters(self):
+        '''Add point data to cpa instances.'''
+        self.table_encounters.drop_table()
+
+        # Add point data to CPA
+        self.table_encounters.cpa_points()
+
+        # Get encounter type
+        self.table_encounters.encounter_type()
+        self.table_encounters.check_nearby()
+
+        # Add encounter info
+        self.table_encounters.giveway_info()
+        self.table_encounters.dcpa()
+        self.table_encounters.tcpa()
+
+
+
+
+
+
+
+
+#         # plot every encounter cog v time, sog v time, step_cog v tcpa
+#
+# fig = plt.figure()
+# ax = fig.add_subplot(111, projection='polar')
+# ax.set_rlabel_position(135)
+# ax.set_theta_zero_location('N')
+# ax.set_theta_direction(-1)
+# c = ax.scatter(np.radians(overtaking['bearing12']), overtaking['distance'], c=np.radians(overtaking['bearing12']), cmap='hsv', alpha=0.75)
+#
