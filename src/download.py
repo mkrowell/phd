@@ -69,8 +69,10 @@ class NAIS_Download(object):
 
         # Data directories
         self.root = abspath(join('data','raw','ais'))
+        self.cleaned = abspath(join('data','cleaned','ais'))
         self.processed = abspath(join('data','processed','ais'))
         os.makedirs(self.root, exist_ok=True)
+        os.makedirs(self.cleaned, exist_ok=True)
         os.makedirs(self.processed, exist_ok=True)
 
         # Download parameters
@@ -118,8 +120,13 @@ class NAIS_Download(object):
         return join(self.root, self.name)
 
     @property
+    def csv_cleaned(self):
+        '''Return path to the cleaned file.'''
+        return join(self.cleaned, self.name)
+
+    @property
     def csv_processed(self):
-        '''Return path to the cleaned downloaded file.'''
+        '''Return path to the processed file.'''
         return join(self.processed, self.name)
 
     @property
@@ -130,7 +137,7 @@ class NAIS_Download(object):
     @retry(stop_max_attempt_number=5)
     def download(self):
         '''Download zip file and extract to temp directory.'''
-        if exists(self.csv) or exists(self.csv_processed):
+        if exists(self.csv) or exists(self.csv_cleaned):
             return
 
         print(f'Downloading NAIS file for month {self.month}...')
@@ -145,9 +152,9 @@ class NAIS_Download(object):
     def clean_raw(self):
         '''Basic cleaning and reducing of data.'''
         print(f'Cleaning NAIS file for month {self.month}...')
-        try:
+        if not exists(self.csv_cleaned):
             self.raw_basic = src.dataframe.Basic_Clean(
-                self.csv,
+                self.csv_cleaned,
                 self.minPoints,
                 self.lonMin,
                 self.lonMax,
@@ -155,11 +162,21 @@ class NAIS_Download(object):
                 self.latMax
             )
             self.raw_basic.clean_raw()
-        except IOError:
+        else:
             print(f'NAIS file for month {self.month} has been cleaned.')
-            pass
 
     def clean_up(self):
         '''Remove subdirectories created during unzipping.'''
         if exists(self.download_dir):
             shutil.rmtree(self.download_dir)
+
+    def processing(self):
+        '''Basic cleaning and reducing of data.'''
+        print(f'Processing NAIS file for month {self.month}...')
+        if not exists(self.processed):
+            self.preprocess = src.dataframe.Processor(self.csv_cleaned)
+            self.preprocess.preprocess(self.csv_cleaned, self.minPoints)
+        else:
+            print(f'NAIS file for month {self.month} has been preprocessed.')
+
+    
