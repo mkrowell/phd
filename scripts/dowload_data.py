@@ -12,11 +12,11 @@
 # ------------------------------------------------------------------------------
 # IMPORTS
 # ------------------------------------------------------------------------------
-from os.path import abspath, dirname, join
+import os
 import sys
 import yaml
 
-sys.path.append(abspath('.'))
+sys.path.append(os.path.abspath('.'))
 import src
 
 
@@ -48,5 +48,6 @@ for month in months:
     nais.month = month
     nais.download()
     nais.clean_raw()
+    # nais.preprocess()
 # Remove temporary folders
 nais.clean_up()
