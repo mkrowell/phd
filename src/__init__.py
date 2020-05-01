@@ -259,7 +259,10 @@ def print_reduction(original_function):
         x = original_function(self, *args,**kwargs)
         after = len(self.df)
         rows = after - before
-        percent = round(-100*rows/before, 2)
+        try:
+            percent = round(-100*rows/before, 2)
+        except ZeroDivisionError:
+            percent = -100
         msg = (
             f"Month {self.month}, Method {original_function.__name__}: "
             f"Removed Rows = {-rows}, Percent Reduction = {percent}"
