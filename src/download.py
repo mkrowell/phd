@@ -13,6 +13,7 @@
 # IMPORTS
 # ------------------------------------------------------------------------------
 import io
+from glob import glob
 import os
 from os.path import abspath, basename, dirname, exists, join
 import requests
@@ -154,7 +155,7 @@ class NAIS_Download(object):
         print(f'Cleaning NAIS file for month {self.month}...')
         if not exists(self.csv_cleaned):
             self.raw_basic = src.dataframe.Basic_Clean(
-                self.csv_cleaned,
+                self.csv,
                 self.minPoints,
                 self.lonMin,
                 self.lonMax,
@@ -173,10 +174,10 @@ class NAIS_Download(object):
     def processing(self):
         '''Basic cleaning and reducing of data.'''
         print(f'Processing NAIS file for month {self.month}...')
-        if not exists(self.processed):
-            self.preprocess = src.dataframe.Processor(self.csv_cleaned)
-            self.preprocess.preprocess(self.csv_cleaned, self.minPoints)
+        if not exists(self.csv_processed):
+            self.preprocess = src.dataframe.Processor(
+                self.csv_cleaned, self.month, self.minPoints
+            )
+            self.preprocess.preprocess()
         else:
             print(f'NAIS file for month {self.month} has been preprocessed.')
-
-    
