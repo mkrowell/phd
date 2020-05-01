@@ -3,7 +3,7 @@
 .. module::
     :language: Python Version 3.6.8
     :platform: Windows 10
-    :synopsis: loaddata into a postgres database
+    :synopsis: construct postgres database
 
 .. moduleauthor:: Maura Rowell <mkrowell@uw.edu>
 '''
@@ -19,10 +19,8 @@ from os.path import abspath, dirname, exists, join
 import osgeo.ogr
 import pandas as pd
 from postgis.psycopg import register
-import pprint
 import psycopg2
-from psycopg2 import sql
-from retrying import retry
+# from psycopg2 import sql
 import shutil
 import subprocess
 import tempfile
@@ -74,9 +72,11 @@ class Postgres_Table(Postgres_Connection):
     """
 
     def __init__(self, table):
+        """
+        Initialize connection and set srid"""
         super(Postgres_Table, self).__init__()
         self.table = table
-        self.srid = 4326
+        self.srid = 32610
 
     def run_DDL(self, query):
         """
@@ -85,21 +85,14 @@ class Postgres_Table(Postgres_Connection):
         Args:
             query (string): A Data Definition Language SQL statement.
         """
-        del self.conn.notices[:]
-        try:
-            with self.conn.cursor() as cur:
+        with self.conn.cursor() as cur:
+            try:
                 cur.execute(query)
                 self.conn.commit()
-        except psycopg2.DatabaseError as err:
-            print(err)
-            raise err
-        finally:
-            if len(self.conn.notices):
-                print(f"Notices: {self.conn.notices}")
-
-    def query_cost(self, query):
-        sql = f"EXPLAIN COST {query}"
-        self.run_DLL(sql)
+            except psycopg2.DatabaseError as err:
+                self.conn.rollback()
+                raise err
+                
         
     def create_table(self, filepath=None, columns=None):
         """
@@ -117,7 +110,7 @@ class Postgres_Table(Postgres_Connection):
         """
         if filepath:
             print(f'Constructing {self.table} from {filepath}...')
-            cmd = f'"C:\\Program Files\\PostgreSQL\\12\\bin\\shp2pgsql.exe" -s 4326 -d {filepath} {self.table} | C:\\OSGEO4w\Bin\psql -d postgres -U postgres -q'
+            cmd = f'"C:\\Program Files\\PostgreSQL\\12\\bin\\shp2pgsql.exe" -s 4326 -d {filepath} {self.table} | psql -d postgres -U postgres -q'
             subprocess.call(cmd, shell=True)
         elif columns:
             print(f'Constructing {self.table} from columns...')
@@ -134,37 +127,13 @@ class Postgres_Table(Postgres_Connection):
         table is dropped.
         
         Args:
-            table (string, optional): Name of table to be dropped. Defaults to None.
+            table (string, optional): Name of table to be dropped.
         """
         if table is None:
             table = self.table
         sql = f'DROP TABLE IF EXISTS {table}'
         print(f'Dropping table {table}...')
         self.run_DDL(sql)
-  
-    def vaccum_table(self, table=None):
-        """
-        Run Vacuum on a given table.
-
-        If table is None, self.table is vaccumed. Otherwise, the given 
-        table is vaccumed.
-        
-        Args:
-            table (string, optional): Name of table to be vacumed. Defaults to None.
-        """
-        if table is None:
-            table = self.table
-        sql = f"VACUUM VERBOSE ANALYZE {table}"
-
-        # VACUUM can not run in a transaction block,
-        # which psycopg2 uses by default.
-        # http://bit.ly/1OUbYB3
-        isolation_level = self.conn.isolation_level
-        self.conn.set_isolation_level(0)
-        self.run_DDL(sql)
-
-        # Set our isolation_level back to normal
-        self.conn.set_isolation_level(isolation_level)
 
     def copy_data(self, csv_file):
         """
@@ -177,8 +146,12 @@ class Postgres_Table(Postgres_Connection):
         with open(csv_file, 'r') as csv:
             print(f'Copying {csv_file} to {self.table}...')
             with self.conn.cursor() as cur:
-                cur.copy_from(csv, self.table, sep=',')
-                self.conn.commit()
+                try:
+                    cur.copy_from(csv, self.table, sep=',')
+                    self.conn.commit()
+                except psycopg2.DatabaseError as err:
+                    self.conn.rollback()
+                    raise err
 
     def add_column(self, name, datatype=None, geometry=False, default=None):
         """
@@ -186,20 +159,20 @@ class Postgres_Table(Postgres_Connection):
         
         Args:
             name (string): Name of the new column.
-            datatype (type, optional): Postgresql/PostGIS datatype. Defaults to None.
-            geometry (bool, optional): Whether the datatype is a geometry. Defaults to False.
-            default (value, optional): The default value of the column. Should be
-                the same type as datatype. Defaults to None.
+            datatype (type, optional): Postgresql/PostGIS datatype. 
+                Defaults to None.
+            geometry (bool, optional): Whether the datatype is a geometry. 
+                Defaults to False.
+            default (value, optional): The default value of the column. 
+                Should be the same type as datatype. Defaults to None.
         """
-        # Set the default sql strings
-        default_str = ''
-        datatype_str = f'{datatype}'
-
         # Handle geometry types
+        datatype_str = f'{datatype}'
         if geometry:
             datatype_str = f'geometry({datatype}, {self.srid})'
        
         # Handle default data types
+        default_str = ''
         if default:
             default_str = f'DEFAULT {default}'
 
@@ -229,15 +202,20 @@ class Postgres_Table(Postgres_Connection):
         Make the given column a POINT/POINTM geometry.
         
         Args:
-            name (string): Name of existing column to be made into Point geometry.
+            name (string): Name of existing column to be made into Point 
+                geometry.
             lon (string): Name of the column containing the longitude of Point.
             lat (string): Name of the column containing the latitude of Point.
-            time (string, optional): Name of the column containing the latitude of Point. Defaults to None.
+            time (string, optional): Name of the column containing the time 
+                of Point. Defaults to None.
         """
         if time:
             sql = f"""
                 UPDATE {self.table}
-                SET {name} = ST_SetSRID(ST_MakePointM({lon}, {lat}, {time}), {self.srid})
+                SET {name} = ST_SetSRID(
+                    ST_MakePointM({lon}, {lat}, {time}), 
+                    {self.srid}
+                )
             """
         else:
             sql = f"""
@@ -267,7 +245,7 @@ class Postgres_Table(Postgres_Connection):
     def add_index(self, name, field=None, gist=False):
         """
         Add index to table using the given field. If field
-        is None, update the existing column.
+        is None, update the existing index.
         
         Args:
             name (string): Name of the new index. Default None.
@@ -279,10 +257,9 @@ class Postgres_Table(Postgres_Connection):
             sql = f"REINDEX {name}"
             print(f'Updating index on {field}...')
         else:
+            kind_str = ''
             if gist:
-                kind_str = 'USING GiST'
-            else:
-                kind_str = ''
+                kind_str = 'USING GiST'                
 
             sql = f"""
                     CREATE INDEX IF NOT EXISTS {name}
@@ -293,10 +270,10 @@ class Postgres_Table(Postgres_Connection):
 
     def reduce_table(self, column, relationship, value):
         """
-        Dp rows that meet condition.
+        Drop rows that meet condition.
         
         Args:
-            column (string):column to test condition on.
+            column (string): column to test condition on.
             relationship (string): =, <, > !=, etc.
             value (string, number): value to use in condition.
         """
@@ -309,24 +286,30 @@ class Postgres_Table(Postgres_Connection):
         self.run_DDL(sql)
         
     def remove_null(self, col):
+        """
+        Remove rows in the table that have a Null in the col
+        """
         print(f'Deleting null rows from {self.table}...')
         sql = f"""DELETE FROM {self.table} WHERE {col} IS NULL"""
-        self.cur.execute(sql)
-        self.conn.commit()
+        self.run_DDL(sql)
 
-    def add_local_time(self, input_col="datetime", timezone="america/los_angeles"):
-        '''Add local time.'''
+    def add_local_time(self, timezone="america/los_angeles"):
+        """
+        Add column containing local time.
+
+        Args:
+            timezone (string): timezone to add time for. Defaults to
+                america/los_angles        
+        """        
         name = 'datetime_local'
         self.add_column(name, datatype='timestamptz')
         sql = f"""
             UPDATE {self.table}
-            SET {name} = {input_col} at time zone 'utc' at time zone '{timezone}'
+            SET {name} = datetime at time zone 'utc' at time zone '{timezone}'
         """
-        self.cur.execute(sql)
-        self.conn.commit()
+        self.run_DDL(sql)
 
     def table_dataframe(self, table=None, select_col=None, where_cond=None):
-        '''Return dataframe.'''
         if table is None:
             table = self.table
         if select_col is None:
@@ -346,6 +329,10 @@ class Postgres_Table(Postgres_Connection):
 # ------------------------------------------------------------------------------
 class Points_Table(Postgres_Table):
 
+    """
+    All processed point data from MarineCadastre
+    """
+
     def __init__(self, table):
         """
         Connect to default database and set table schema.
@@ -356,109 +343,41 @@ class Points_Table(Postgres_Table):
         super(Points_Table, self).__init__(table)
         self.columns = """
             MMSI integer NOT NULL,
+            Trip integer NOT NULL,
             DateTime timestamptz NOT NULL,
             LAT float8 NOT NULL,
+            LAT_UTM float8 NOT NULL,
             LON float8 NOT NULL,
+            LON_UTM float8 NOT NULL,
             SOG float(4) NOT NULL,
             COG float(4) NOT NULL,
             Heading float(4),
+            Step_Azimuth float(4), 
+            Acceleration float(4),
+            Alteration float(4), 
+            Alteration_Degrees float(4), 
+            Alteration_Cosine  float(4), 
             VesselName varchar(32),
             VesselType varchar(64),
             Status varchar(64),
             Length float(4),
-            In_Bound boolean,
-            PRIMARY KEY(MMSI, DateTime)
+            PRIMARY KEY(MMSI, Trip, DateTime)
         """
-
-        self.window_mmsi = '(PARTITION BY MMSI ORDER BY DateTime ASC)'
-
-    def window_column(self, name, window_query):
-        """
-        Allows column assignment using a window functions.
-        
-        Args:
-            name (string): Name of column to update
-            select_query (string): Expression to apply the window to
-        """
-        sql = f"""
-            UPDATE {self.table}
-            SET {name} = temp.SubQueryColumn
-            FROM (
-                SELECT 
-                    MMSI,
-                    DateTime,
-                    {window_query} OVER {self.window_mmsi} AS SubQueryColumn
-                FROM {self.table}
-            ) AS temp
-            WHERE 
-                temp.MMSI = {self.table}.MMSI AND
-                temp.DateTime = {self.table}.DateTime        
-        """
-        return sql
-
-    def add_time_interval(self):
-        """Add time interval between data points.
-        """
-        name = 'TimeInterval'
-        self.add_column(name, datatype='interval', default="'0 seconds'")
-        window_sql = 'DateTime - LAG(DateTime, 1)'
-        self.run_DDL(self.window_column(name, window_sql))
-
-    def drop_anomaly(self):
-        """
-        Drop rows that have default SOG/COG values.
-        """
-        sql = f"""
-            DELETE FROM {self.table} WHERE 
-            SOG < 0 AND
-            COG = 310.4
-        """
-        self.run_DDL(sql)
-        sql_sog = f"""
-            DELETE FROM {self.table} WHERE 
-            SOG < 0
-        """
-        self.run_DDL(sql_sog)
 
     def add_geometry(self):
         """
         PostGIS PointM geometry to the database.
         """
         self.add_column('geom', datatype='POINTM', geometry=True)
-        self.add_point('geom', 'lon', 'lat', "date_part('epoch', datetime)")
-
-    # def add_track(self):
-    #     name = 'Track'
-    #     self.add_column(name, datatype='int')
-    #     sql = f"""
-    #         UPDATE {self.table}
-    #         SET {name}
-    #     """
-
-    def add_distance(self):
-        '''Add distance between data points.'''
-        name = 'Distance'
-        self.add_column(name, datatype='float(4)', default=0)
-        sql = f"""
-            UPDATE {self.table}
-            SET {name} = temp.Distance
-            FROM (
-                SELECT 
-                    MMSI,
-                    DateTime,
-                    geom,
-                    ST_Distance(geom, LAG(geom, 1) OVER {self.window_mmsi}) AS Distance
-                FROM {self.table}
-            ) AS temp
-            WHERE 
-                temp.MMSI = {self.table}.MMSI AND
-                temp.DateTime = {self.table}.DateTime        
-        """
-        self.run_DLL(sql)
-
+        self.add_point('geom', 'lon_utm', 'lat_utm', "date_part('epoch', datetime)")
 
     def add_tss(self, tss):
-        '''Add column marking whether the point is in the TSS.'''
+        """
+        Add column marking whether the point is in the TSS.
+
+        Args:
+            tss (postgres_table): table representing the TSS
+        """
         name = 'in_tss'
         self.add_column(name, datatype='boolean', default='FALSE')
         sql = f"""
@@ -473,73 +392,149 @@ class Points_Table(Postgres_Table):
             WHERE {self.table}.lat=tssTest.lat
             AND {self.table}.lon=tssTest.lon
         """
-        self.run_DLL(sql)
-        self.conn.commit()
+        self.run_DDL(sql)
 
 
 class Tracks_Table(Postgres_Table):
 
-    def __init__(self, conn, table):
-        '''Connect to default database.'''
-        super(Tracks_Table, self).__init__(conn, table)
-        self.cur = self.conn.cursor()
+    """
+    Tracks constructed from MMSI, Trip, DateTime
+    """
 
-    def convert_to_tracks(self, points, groupby):
-        '''Add LINESTRING for each MMSI, TrackID.'''
+    def __init__(self, table):
+        """
+        Connect to default database.
+        
+        Args:
+            table (string): Name of table.
+        """
+        super(Tracks_Table, self).__init__(table)
+        self.cur = self.conn.cursor()      
+
+    def convert_to_tracks(self, points):
+        """Add LINESTRING for each MMSI, TrackID."""
         print('Creating tracks from points...')
-        sql = """
-            CREATE TABLE {table} AS
+        sql = f"""
+            CREATE TABLE {self.table} AS
             SELECT
-                mmsi,
-                trajectory,
-                vesseltype,
-                max(datetime) - min(datetime) AS duration,
-                tsrange(min(datetime), max(datetime)) AS period,
-                ST_MakeLine(geom ORDER BY datetime) AS track
+                MMSI,
+                Trip,
+                VesselType,
+                max(DateTime) - min(DateTime) AS duration,
+                tstzrange(min(DateTime), max(DateTime)) AS period,
+                ST_MakeLine(geom ORDER BY DateTime) AS track
             FROM {points}
-            GROUP BY {group}
+            GROUP BY MMSI, Trip, VesselType
             HAVING COUNT(*) > 2
-            """.format(table=self.table, points=points, group=groupby)
+        """
+        self.run_DDL(sql)
+
+
+class CPA_Table(Postgres_Table):
+
+    """
+    Closest point of approach calculated between each set of concurrent
+    tracks
+    """
+
+    def __init__(self, table, input_table, shore_table):
+        """
+        Connect to default database.
+        
+        Args:
+            table (string): Name of table
+            input_table (string): Name of tracks table
+            shore_table (string): Name of shore table
+        """
+
+        super(CPA_Table, self).__init__(table)
+        self.cur = self.conn.cursor()
+        self.input = input_table
+        self.shore = shore_table
+
+    def tracks_tracks(self):
+        """Make pairs of tracks that happen in same time interval."""
+        print('Joining tracks with itself to make interaction table...')
+        sql = f"""
+            CREATE TABLE {self.table} AS
+            SELECT
+                t1.mmsi AS mmsi_1,
+                t1.vesseltype AS type_1,
+                t1.trip AS trip_1,
+                t1.track AS track_1,
+                t2.mmsi AS mmsi_2,
+                t2.vesseltype AS type_2,
+                t2.trip AS trip_2,
+                t2.track AS track_2,
+                ST_ClosestPointOfApproach(t1.track, t2.track) AS cpa_epoch,
+                ST_DistanceCPA(t1.track, t2.track) AS cpa_distance
+            FROM {self.input} t1 LEFT JOIN {self.input} t2
+            ON t1.period && t2.period
+            AND t1.mmsi != t2.mmsi
+        """
+        self.run_DDL(sql)
+
+    def cpa_time(self):
+        """Add track time"""
+        self.add_column('cpa_time', 'TIMESTAMP', geometry=False)
+        sql = f"""
+            UPDATE {self.table}
+            SET cpa_time = to_timestamp(cpa_epoch)
+        """
+        self.run_DDL(sql)
+
+    def cpa_points(self):
+        """Add track points"""
+        self.add_column('cpa_point_1', 'POINTM', geometry=True)
+        self.add_column('cpa_point_2', 'POINTM', geometry=True)
+        sql = f"""
+            UPDATE {self.table}
+            SET
+                cpa_point_1 = ST_Force3DM(
+                    ST_GeometryN(
+                        ST_LocateAlong(track_1, cpa_epoch),
+                        1
+                    )
+                ),
+                cpa_point_2 = ST_Force3DM(
+                    ST_GeometryN(
+                        ST_LocateAlong(track_2, cpa_epoch),
+                        1
+                    )
+                )
+        """
+        self.run_DDL(sql)
+    
+    def cpa_line(self):
+        """Add line between CPA points"""
+        self.add_column('cpa_line', 'LINESTRINGM', geometry=True)
+        sql = f"""
+            UPDATE {self.table}
+            SET cpa_line = ST_MakeLine(cpa_point_1, cpa_point_2)
+        """
+        self.cur.execute(sql)
+        self.conn.commit()
+
+    def delete_shore_cross(self):
+        """Delete CPAs that line on shore."""
+        print('Deleting shore intersects from {0}...'.format(self.table))
+        sql = f"""
+            DELETE FROM {self.table} c
+            USING {self.shore} s
+            WHERE ST_Intersects(c.cpa_line, s.geom)
+        """
         self.cur.execute(sql)
         self.conn.commit()
 
 
-# class Tracks_Table(Postgres_Table):
-#
-#     def __init__(self, conn, table):
-#         '''Connect to default database.'''
-#         super(Tracks_Table, self).__init__(conn, table)
-#         self.cur = self.conn.cursor()
-#
-#     def convert_to_tracks(self, points):
-#         '''Add LINESTRING for each MMSI, TrackID.'''
-#         print('Creating tracks from points...')
-#         sql = """
-#             CREATE TABLE {0} AS
-#             SELECT
-#                 mmsi,
-#                 track AS id,
-#                 vesseltype AS type,
-#                 max(datetime) - min(datetime) AS duration,
-#                 tsrange(min(datetime), max(datetime)) AS period,
-#                 ST_MakeLine(geom ORDER BY datetime) AS track
-#             FROM {1}
-#             GROUP BY mmsi, id, type
-#             HAVING COUNT(*) > 2
-#             """.format(self.table, points)
-#         self.cur.execute(sql)
-#         self.conn.commit()
-#
-
-
 # class CPA_Table(Postgres_Table):
-#
+
 #     def __init__(self, conn, table, input_table):
 #         '''Connect to default database.'''
 #         super(CPA_Table, self).__init__(conn, table)
 #         self.cur = self.conn.cursor()
 #         self.input = input_table
-#
+
 #     def points_points(self):
 #         '''Join points to itself to get closest points.'''
 #         print('Joining points to points to find CPAs...')
@@ -717,91 +712,6 @@ class Tracks_Table(Postgres_Table):
 
 
 
-
-
-class CPA_Table(Postgres_Table):
-
-    def __init__(self, conn, table, input_table, shore_table):
-        '''Connect to default database.'''
-        super(CPA_Table, self).__init__(conn, table)
-        self.cur = self.conn.cursor()
-        self.input = input_table
-        self.shore = shore_table
-
-    def tracks_tracks(self):
-        '''Make pairs of tracks that happen in same time interval.'''
-        print('Joining tracks with itself to make interaction table...')
-        sql = """
-            CREATE TABLE {table} AS
-            SELECT
-                n1.mmsi AS mmsi1,
-                n1.id AS id1,
-                n1.track AS track1,
-                n2.mmsi AS mmsi2,
-                n2.id AS id2,
-                n2.track AS track2,
-                ST_ClosestPointOfApproach(n1.track, n2.track) AS cpa_epoch,
-                ST_DistanceCPA(n1.track, n2.track) AS cpa_distance
-            FROM {input} n1 LEFT JOIN {input} n2
-            ON n1.period && n2.period
-            AND n1.mmsi != n2.mmsi
-        """.format(table=self.table, input=self.input)
-        self.cur.execute(sql)
-        self.conn.commit()
-
-    def cpa_points(self):
-        '''Add track points.'''
-        self.add_column('cpa_point1', 'POINTM', geometry=True, srid=32610)
-        self.add_column('cpa_point2', 'POINTM', geometry=True, srid=32610)
-        sql = """
-            UPDATE {0}
-            SET
-                cpa_point1 = ST_Force3DM(
-                    ST_GeometryN(
-                        ST_LocateAlong(track1, cpa_epoch),
-                        1
-                    )
-                ),
-                cpa_point2 = ST_Force3DM(
-                    ST_GeometryN(
-                        ST_LocateAlong(track2, cpa_epoch),
-                        1
-                    )
-                )
-        """
-        self.cur.execute(sql)
-        self.conn.commit()
-
-    def cpa_time(self):
-        '''Add track time.'''
-        self.add_column('cpa_time', 'TIMESTAMP', geometry=False)
-        sql = """
-            UPDATE {0}
-            SET {1} = to_timestamp(cpa_epoch)
-        """.format(self.table, 'cpa_time')
-        self.cur.execute(sql)
-        self.conn.commit()
-
-    def cpa_line(self):
-        '''Add line between CPA points.'''
-        self.add_column('cpa_line', 'LINESTRINGM', geometry=True, srid=32610)
-        sql = """
-            UPDATE {0}
-            SET {1} = ST_MakeLine(cpa_point1, cpa_point2)
-        """.format(self.table, 'cpa_line')
-        self.cur.execute(sql)
-        self.conn.commit()
-
-    def delete_shore_cross(self):
-        '''Delete CPAs that line on shore.'''
-        print('Deleting shore intersects from {0}...'.format(self.table))
-        sql = """
-            DELETE FROM {table} c
-            USING {shore} s
-            WHERE ST_Intersects(c.cpa_line, s.geom)
-        """.format(table=self.table, shore=self.shore)
-        self.cur.execute(sql)
-        self.conn.commit()
 
 
 
@@ -1697,4 +1607,31 @@ class NAIS_Database(object):
 # ax.set_theta_zero_location('N')
 # ax.set_theta_direction(-1)
 # c = ax.scatter(np.radians(overtaking['bearing12']), overtaking['distance'], c=np.radians(overtaking['bearing12']), cmap='hsv', alpha=0.75)
-#
+# #
+# self.window_mmsi = '(PARTITION BY MMSI, Trip ORDER BY DateTime ASC)'
+
+#     def window_column(self, name, window_query):
+#         """
+#         Allows column assignment using a window functions.
+        
+#         Args:
+#             name (string): Name of column to update
+#             select_query (string): Expression to apply the window to
+#         """
+#         sql = f"""
+#             UPDATE {self.table}
+#             SET {name} = temp.SubQueryColumn
+#             FROM (
+#                 SELECT 
+#                     MMSI,
+#                     Trip,
+#                     DateTime,
+#                     {window_query} OVER {self.window_mmsi} AS SubQueryColumn
+#                 FROM {self.table}
+#             ) AS temp
+#             WHERE 
+#                 temp.MMSI = {self.table}.MMSI AND
+#                 temp.Trip = {self.table}.Trip AND
+#                 temp.DateTime = {self.table}.DateTime        
+#         """
+#         return sql
