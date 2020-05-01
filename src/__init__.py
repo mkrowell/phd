@@ -260,11 +260,13 @@ def print_reduction(original_function):
         after = len(self.df)
         rows = after - before
         percent = round(-100*rows/before, 2)
-        print("Method {0}: Removed Rows = {1}, Percent Reduction = {2}".format(
-            original_function.__name__,
-            -rows,
-            percent)
+        msg = (
+            f"Month {self.month}, Method {original_function.__name__}: "
+            f"Removed Rows = {-rows}, Percent Reduction = {percent}"
         )
+        print(msg)
+        with open('reports\\logs\\basic_clean.txt', 'a') as f:
+            f.write(msg + "\n")
         return x
     return print_reduction_wrapper
 
@@ -276,28 +278,15 @@ def print_reduction_gdf(original_function):
         after = len(self.gdf)
         rows = after - before
         percent = round(-100*rows/before, 2)
-        print("Method {0}: Removed Rows = {1}, Percent Reduction = {2}".format(
-            original_function.__name__,
-            -rows,
-            percent)
+        msg = (
+            f"Month {self.month}, Method {original_function.__name__}: "
+            f"Removed Rows = {-rows}, Percent Reduction = {percent}"
         )
+        print(msg)
+        with open('reports\\logs\\preprocess.txt', 'a') as f:
+            f.write(msg + "\n")
         return x
     return print_reduction_wrapper
-
-def check_length(original_function):
-    '''Print the amount of rows removed by method.'''
-    def check_length_wrapper(self, *args,**kwargs):
-        before = len(self.df)
-        x = original_function(self, *args,**kwargs)
-        after = len(self.df)
-        rows = after - before
-        if rows != 0:
-            print("ALERT: {0} changed length of dataframe by {1}!".format(
-                original_function.__name__,
-                rows)
-            )
-        return x
-    return check_length_wrapper
 
 def time_this(original_function):
     '''Print the method's execution time.'''
@@ -335,7 +324,6 @@ def time_all(Cls):
             else:
                 return x
     return DecoratedClass
-
 
 # ------------------------------------------------------------------------------
 # PACKAGE IMPORTS
