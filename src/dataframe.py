@@ -68,29 +68,71 @@ def save_plot(filepath):
     """Save and close figure"""
     if exists(filepath):
             os.remove(filepath) 
+    plt.tight_layout()
     plt.savefig(filepath)
-    plt.close(figure)
+
+def plot_mmsi_by_type(df, prepend):
+    """Create a chart of the number of unique vessels per type"""
+    filename = f"{prepend} - Unique MMSI by Vessel Type"
+    fig, ax = plt.subplots()
+    unique = df[['MMSI', 'VesselType']].drop_duplicates(keep='first')
+    unique['VesselType'].value_counts().plot(kind='bar', alpha=0.75, rot=0)
+
+    ax.set_ylabel('Number of Unique MMSI')
+    fig.suptitle(filename, fontsize=16)
+    plt.savefig(join(PLOTS_DIR, filename))
+    plt.close(fig)
+
+def plot_status(df, prepend):
+    """Create a chart of status observations"""
+    filename = f"{prepend} - Navigation Status"
+    fig, ax = plt.subplots()
+    df['Status'].value_counts().plot(kind='bar', alpha=0.75)
+
+    ax.set_ylabel('Number of Data Points')
+    fig.suptitle(filename, fontsize=16)
+    plt.savefig(join(PLOTS_DIR, filename))
+    plt.close(fig)
 
 def plot_sog(df, prepend):
-    """Create a chart of the number of unique vessels per type"""
-    filename = f'{prepend} SOG.png'
+    """Create a chart of SOGs observed"""
+    filename = f'{prepend} - SOG.png'
 
-    fig, ax = plt.subplots(figsize=(10,10))
+    fig, ax = plt.subplots()
     df.groupby('SOG').count()['BaseDateTime'].plot()
     ax.set_ylabel('Number of Data Points')
     fig.suptitle(filename, fontsize=16)
 
     filepath = join(PLOTS_DIR, filename)
     save_plot(filepath)
+    plt.close(fig)
 
 def plot_cog(df, prepend):
-    """Create a chart of the number of unique vessels per type"""
-    fig, ax = plt.subplots(figsize=(10,10))
-    df.groupby('COG').count()['BaseDateTime'].plot()
-    filename = f'{prepend} SOG.png'
+    """Create a chart of COGs observed by type"""
+    filename = f'{prepend} - COG.png'   
+    groups = df.groupby('VesselType')['COG']
+    fig, ax = plt.subplots()
+    for k, v in groups:
+        v.hist(label=k, alpha=.3, ax=ax)
+
+    ax.legend()
     ax.set_ylabel('Number of Data Points')
     fig.suptitle(filename, fontsize=16)
     plt.savefig(join(PLOTS_DIR, filename))
+    plt.close(fig)
+
+def plot_time_interval(df, prepend):
+    """Create a chart of time intervals observed"""
+    filename = f'{prepend} - Time Interval.png'
+
+    fig, ax = plt.subplots()
+    df['Interval'].hist()
+    ax.set_ylabel('Number of Data Points')
+    fig.suptitle(filename, fontsize=16)
+
+    filepath = join(PLOTS_DIR, filename)
+    save_plot(filepath)
+    plt.close(fig)
 
 # ------------------------------------------------------------------------------
 # CLEAN
@@ -123,24 +165,35 @@ class Basic_Clean(object):
         # Standardize missing values
         self.df['Status'].replace(np.nan, "undefined", inplace=True)
         self.df['Heading'].replace(511, np.nan, inplace=True)
+        self.map_vessel_types()
+        self.normalize_angles()
         self.required = [
             'MMSI', 'BaseDateTime', 'LAT', 'LON', 'SOG', 'COG', 'Heading'
         ]
 
-        # Reduce to area of interest and correct type
+        # Reduce to area of interest
         self.select_spatial()
-        self.map_vessel_types()
 
-        # Save raw df
+        # Calculate time interval - for plotting
+        self.time_interval()
+    
+        # Save raw df for plotting purposes
         self.df_raw = self.df.copy()
-
 
     # MAIN FUNCTIONS
     def plot(self):
         """Plot data before and after its been cleaned"""
+        plot_mmsi_by_type(self.df_raw, "Raw")
+        plot_status(self.df_raw, "Raw")
         plot_sog(self.df_raw, "Raw")
-        plot_sog(self.df, "Cleaned")
+        plot_cog(self.df_raw, "Raw")
+        plot_time_interval(self.df_raw, "Raw")
 
+        plot_mmsi_by_type(self.df, "Cleaned")
+        plot_status(self.df, "Cleaned")
+        plot_sog(self.df, "Cleaned")
+        plot_cog(self.df, "Cleaned")
+        plot_time_interval(self.df, "Cleaned")
 
     @print_reduction
     def clean_raw(self):
@@ -150,7 +203,7 @@ class Basic_Clean(object):
         """
         self.drop_null()
         self.drop_duplicate_rows()
-        
+
         self.drop_duplicate_keys()
         self.drop_inconsistent_info()
         self.drop_columns()
@@ -160,9 +213,6 @@ class Basic_Clean(object):
         self.filter_time(3)
        
         self.drop_sparse_mmsi()
-      
-        self.normalize_angles()
-        self.map_vessel_types()
 
         self.filter_type()
         self.filter_status()
@@ -171,7 +221,6 @@ class Basic_Clean(object):
         self.df.to_csv(self.cleaned, index=False, header=True)
 
     # DATAFRAME CLEANING 
-    @print_reduction
     def select_spatial(self):
         """Limit data to bounding box of interest."""
         self.df = self.df[
@@ -234,9 +283,8 @@ class Basic_Clean(object):
         self.df['SOG'] = self.df['SOG'].abs()
         self.df = self.df[self.df['SOG'] > limit]
     
-    @print_reduction
-    def filter_time(self, limit):
-        """Limit to points less than 3 minutes from prior data point."""
+    def time_interval(self):
+        """Calculate time interval between points"""
         col = 'Interval'
         group = self.df.sort_values(['MMSI', 'BaseDateTime']).groupby('MMSI')
         
@@ -244,6 +292,9 @@ class Basic_Clean(object):
         self.df[col].fillna(datetime.timedelta(seconds=60), inplace=True)
         self.df[col] = self.df[col].astype('timedelta64[s]')
 
+    @print_reduction
+    def filter_time(self, limit):
+        """Limit to points less than 3 minutes from prior data point."""
         self.df = self.df[self.df['Interval'] < limit*60]
 
     @print_reduction
@@ -270,6 +321,7 @@ class Basic_Clean(object):
 
         self.df['VesselType'].replace("", np.nan, inplace=True)
         self.df['VesselType'] = self.df['VesselType'].map(v_map)
+        self.df['VesselType'] = self.df['VesselType'].replace(np.nan, "Unknown")
         self.df['VesselType'] = self.df['VesselType'].astype('category')
 
     @print_reduction
@@ -290,21 +342,8 @@ class Basic_Clean(object):
             'power-driven vessel pushing ahead or towing alongside'
         ]
         self.df = self.df[~self.df['Status'].isin(status)]
-
-    def plot_mmsi_by_type(self):
-        """Create a chart of the number of unique vessels per type"""
-        fig, ax = plt.subplots(figsize=(10,10))
-        mmsi_group = self.df['VesselType'].groupby('MMSI').count()
-        mmsi_group['VesselType'].count().plot()
-        
-        self.df.groupby('VesselType').count()['MMSI'].plot()
-
     
       
-
-
-
-
 # ------------------------------------------------------------------------------
 # QUALITY CHECK
 # ------------------------------------------------------------------------------
