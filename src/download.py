@@ -163,6 +163,7 @@ class NAIS_Download(object):
                 self.latMax
             )
             self.raw_basic.clean_raw()
+            self.raw_basic.plot()
         else:
             print(f'NAIS file for month {self.month} has been cleaned.')
 
