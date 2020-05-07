@@ -64,11 +64,15 @@ def angle_difference(angle1, angle2):
 # ------------------------------------------------------------------------------
 # PLOT FUNCTIONS
 # ------------------------------------------------------------------------------
-def save_plot(filepath):
+def save_plot(ax, filepath):
     """Save and close figure"""
+    ax.xaxis.set_tick_params(labelsize=20)
+    ax.yaxis.set_tick_params(labelsize=20)
+
     if exists(filepath):
-            os.remove(filepath) 
-    plt.tight_layout()
+            os.remove(filepath)
+    plt.tight_layout() 
+    plt.subplots_adjust(top=0.9, bottom=0.2)
     plt.savefig(filepath)
 
 def plot_mmsi_by_type(df, prepend):
@@ -78,9 +82,8 @@ def plot_mmsi_by_type(df, prepend):
     unique = df[['MMSI', 'VesselType']].drop_duplicates(keep='first')
     unique['VesselType'].value_counts().plot(kind='bar', alpha=0.75, rot=0)
 
-    ax.set_ylabel('Number of Unique MMSI')
-    fig.suptitle(filename, fontsize=16)
-    plt.savefig(join(PLOTS_DIR, filename))
+    ax.set_ylabel('Number of Unique MMSI', fontsize=20)
+    save_plot(ax, join(PLOTS_DIR, filename))
     plt.close(fig)
 
 def plot_status(df, prepend):
@@ -89,9 +92,8 @@ def plot_status(df, prepend):
     fig, ax = plt.subplots()
     df['Status'].value_counts().plot(kind='bar', alpha=0.75)
 
-    ax.set_ylabel('Number of Data Points')
-    fig.suptitle(filename, fontsize=16)
-    plt.savefig(join(PLOTS_DIR, filename))
+    ax.set_ylabel('Number of Data Points', fontsize=20)
+    save_plot(ax, join(PLOTS_DIR, filename))
     plt.close(fig)
 
 def plot_sog(df, prepend):
@@ -100,25 +102,28 @@ def plot_sog(df, prepend):
 
     fig, ax = plt.subplots()
     df.groupby('SOG').count()['BaseDateTime'].plot()
-    ax.set_ylabel('Number of Data Points')
-    fig.suptitle(filename, fontsize=16)
+    ax.set_ylabel('Number of Data Points', fontsize=20)
 
     filepath = join(PLOTS_DIR, filename)
-    save_plot(filepath)
+    save_plot(ax, filepath)
     plt.close(fig)
 
 def plot_cog(df, prepend):
     """Create a chart of COGs observed by type"""
     filename = f'{prepend} - COG.png'   
     groups = df.groupby('VesselType')['COG']
-    fig, ax = plt.subplots()
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection='polar')
     for k, v in groups:
-        v.hist(label=k, alpha=.3, ax=ax)
+        radians = np.deg2rad(v)
+        radians.hist(label=k, alpha=0.3, ax=ax)
 
-    ax.legend()
-    ax.set_ylabel('Number of Data Points')
-    fig.suptitle(filename, fontsize=16)
-    plt.savefig(join(PLOTS_DIR, filename))
+    ax.set_theta_zero_location("N")
+    ax.set_theta_direction(-1)
+
+    ax.legend(loc='upper center', bbox_to_anchor=(0, 1.05),
+            ncol=1, fancybox=True)
+    save_plot(ax, join(PLOTS_DIR, filename))
     plt.close(fig)
 
 def plot_time_interval(df, prepend):
@@ -127,12 +132,12 @@ def plot_time_interval(df, prepend):
 
     fig, ax = plt.subplots()
     df['Interval'].hist()
-    ax.set_ylabel('Number of Data Points')
-    fig.suptitle(filename, fontsize=16)
+    ax.set_ylabel('Number of Data Points', fontsize=20)
 
     filepath = join(PLOTS_DIR, filename)
-    save_plot(filepath)
+    save_plot(ax, filepath)
     plt.close(fig)
+
 
 # ------------------------------------------------------------------------------
 # CLEAN
@@ -321,7 +326,7 @@ class Basic_Clean(object):
 
         self.df['VesselType'].replace("", np.nan, inplace=True)
         self.df['VesselType'] = self.df['VesselType'].map(v_map)
-        self.df['VesselType'] = self.df['VesselType'].replace(np.nan, "Unknown")
+        self.df['VesselType'] = self.df['VesselType'].replace(np.nan, "unknown")
         self.df['VesselType'] = self.df['VesselType'].astype('category')
 
     @print_reduction
