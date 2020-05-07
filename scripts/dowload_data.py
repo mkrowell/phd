@@ -25,8 +25,8 @@ import src
 # ------------------------------------------------------------------------------
 city = 'seattle'
 year = '2017' 
-months = [str(i).zfill(2) for i in range(1, 13)]
-
+# months = [str(i).zfill(2) for i in range(1, 13)]
+months = ['07']
 
 # ------------------------------------------------------------------------------
 # DOWNLOAD DATA
@@ -48,6 +48,6 @@ for month in months:
     nais.month = month
     nais.download()
     nais.clean_raw()
-    # nais.preprocess()
+    nais.processing()
 # Remove temporary folders
 nais.clean_up()
