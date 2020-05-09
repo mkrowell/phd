@@ -13,9 +13,8 @@
 # IMPORTS
 # ------------------------------------------------------------------------------
 import io
-from glob import glob
 import os
-from os.path import abspath, basename, dirname, exists, join
+from os.path import abspath, dirname, exists, join
 import requests
 from retrying import retry
 import shutil
@@ -30,12 +29,13 @@ import src
 # ------------------------------------------------------------------------------
 class Shapefile_Download(object):
 
-    '''
+    """
     Download a shapefile representation of the United States shoreline
     and save it to the data directory.
-    '''
+    """
 
     def __init__(self, name):
+        """Initialize parameters from yaml"""
         parameters_file = join(dirname(__file__), 'shapefile_settings.yaml')
         with open(parameters_file, 'r') as stream:
             parameters = yaml.safe_load(stream)
@@ -46,7 +46,7 @@ class Shapefile_Download(object):
         self.output = join(self.root, self.filename)
 
     def download(self):
-        '''Download zip file and extract to data directory.'''
+        """Download zip file and extract to data directory"""
         if exists(self.output):
             print(f'The {self.filename} shapefile has already been downloaded.')
             return self.output
@@ -65,80 +65,55 @@ class NAIS_Download(object):
     '''
 
     def __init__(self, city, year):
+        """Initialize parameters and set up directories"""
         self.city = city
         self.year = year
+        self._month = '01'
 
         # Data directories
         self.root = abspath(join('data','raw','ais'))
-        self.cleaned = abspath(join('data','cleaned','ais'))
-        self.processed = abspath(join('data','processed','ais'))
         os.makedirs(self.root, exist_ok=True)
-        os.makedirs(self.cleaned, exist_ok=True)
-        os.makedirs(self.processed, exist_ok=True)
-
-        # Download parameters
-        self.download_dir = join(self.root, 'AIS_ASCII_by_UTM_Month')
-
-        # Data files are separated by month
-        self._month = '01'
+        self.download_dir = join(self.root, 'AIS_ASCII_by_UTM_Month')      
 
         # City associated parameters
         param_yaml = join(dirname(__file__), 'settings.yaml')
         with open(param_yaml, 'r') as stream:
             self.parameters = yaml.safe_load(stream)[self.city]
-
         self.zone = self.parameters['zone']
-        self.minPoints = self.parameters['minPoints']
-        self.lonMin = self.parameters['lonMin']
-        self.lonMax = self.parameters['lonMax']
-        self.latMin = self.parameters['latMin']
-        self.latMax = self.parameters['latMax']
-
-        # Initialize dataframe
-        self.df = None  
 
     @property
     def month(self):
-        '''Return the month of the instance.'''
+        """Return the month of the instance"""
         return self._month
 
     @month.setter
     def month(self, month):
-        '''Set the month of the instance.'''
+        """Set the month of the instance"""
         month = str(month).zfill(2)
         if month not in [str(i).zfill(2) for i in range(1, 13)]:
             raise UserWarning('Month must be betwen 01 and 12.')
         self._month = month
 
     @property
+    def url(self):
+        """Return url for the given year, month, and zone"""
+        return f'https://coast.noaa.gov/htdata/CMSP/AISDataHandler/{self.year}/AIS_{self.year}_{self.month}_Zone{self.zone}.zip'
+
+    @property
     def name(self):
-        '''Return basename of the downloaded file.'''
+        """Return basename of the downloaded file"""
         return f'AIS_{self.year}_{self.month}_Zone{self.zone}.csv'
 
     @property
     def csv(self):
-        '''Return path to the raw downloaded file.'''
-        return join(self.root, self.name)
-
-    @property
-    def csv_cleaned(self):
-        '''Return path to the cleaned file.'''
-        return join(self.cleaned, self.name)
-
-    @property
-    def csv_processed(self):
-        '''Return path to the processed file.'''
-        return join(self.processed, self.name)
-
-    @property
-    def url(self):
-        '''Return url for the given year, month, and zone.'''
-        return f'https://coast.noaa.gov/htdata/CMSP/AISDataHandler/{self.year}/AIS_{self.year}_{self.month}_Zone{self.zone}.zip'
+        """Return path to the raw downloaded file"""
+        return join(self.root, self.name)   
     
     @retry(stop_max_attempt_number=5)
     def download(self):
-        '''Download zip file and extract to temp directory.'''
+        """Download zip file and extract to temp directory"""
         if exists(self.csv) or exists(self.csv_cleaned):
+            print(f"NAIS file for month {self.month} has been downloaded.")
             return
 
         print(f'Downloading NAIS file for month {self.month}...')
@@ -149,36 +124,10 @@ class NAIS_Download(object):
         self.extracted_file = src.find_file(self.root, self.name)
         shutil.copy(self.extracted_file, self.root)
         os.remove(zfile)
-
-    def clean_raw(self):
-        '''Basic cleaning and reducing of data.'''
-        print(f'Cleaning NAIS file for month {self.month}...')
-        if not exists(self.csv_cleaned):
-            self.raw_basic = src.dataframe.Basic_Clean(
-                self.csv,
-                self.minPoints,
-                self.lonMin,
-                self.lonMax,
-                self.latMin,
-                self.latMax
-            )
-            self.raw_basic.clean_raw()
-            self.raw_basic.plot()
-        else:
-            print(f'NAIS file for month {self.month} has been cleaned.')
+        print(f"NAIS file for month {self.month} has been downloaded.")
 
     def clean_up(self):
-        '''Remove subdirectories created during unzipping.'''
+        """Remove subdirectories created during unzipping"""
+        print(f'Cleaning up download directory...')
         if exists(self.download_dir):
             shutil.rmtree(self.download_dir)
-
-    def processing(self):
-        '''Basic cleaning and reducing of data.'''
-        print(f'Processing NAIS file for month {self.month}...')
-        if not exists(self.csv_processed):
-            self.preprocess = src.dataframe.Processor(
-                self.csv_cleaned, self.month, self.minPoints
-            )
-            self.preprocess.preprocess()
-        else:
-            print(f'NAIS file for month {self.month} has been preprocessed.')
