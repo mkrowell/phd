@@ -128,6 +128,7 @@ class NAIS_Download(object):
 
     def clean_up(self):
         """Remove subdirectories created during unzipping"""
-        print(f'Cleaning up download directory...')
+        print(f'Cleaning up...')
         if exists(self.download_dir):
             shutil.rmtree(self.download_dir)
+        print(f'Temporary files removed.')
