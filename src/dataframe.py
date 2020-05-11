@@ -19,6 +19,7 @@ import numpy as np
 import os
 from os.path import abspath, basename, dirname, exists, join
 import pandas as pd
+import seaborn as sns
 from shapely.geometry import Point
 import yaml
 
@@ -41,6 +42,7 @@ PLOTS_DIR = abspath(join(dirname(__file__) ,'..','reports','figures'))
 # SETTINGS
 # ------------------------------------------------------------------------------
 themes.theme_paul_tol()
+sns.set(color_codes=True)
 
 
 # ------------------------------------------------------------------------------
@@ -164,17 +166,19 @@ class Basic_Clean(object):
 
         # Create raw NAIS dataframe
         self.df = pd.read_csv(self.csv)
+        self.required = [
+            'MMSI', 'BaseDateTime', 'LAT', 'LON', 'SOG', 'COG', 'Heading'
+        ]
         self.df['BaseDateTime'] = pd.to_datetime(self.df['BaseDateTime'])
         self.df.sort_values('MMSI', inplace=True)
         
         # Standardize missing values
         self.df['Status'].replace(np.nan, "undefined", inplace=True)
         self.df['Heading'].replace(511, np.nan, inplace=True)
+
+        # Standardize vessel type and cog
         self.map_vessel_types()
         self.normalize_angles()
-        self.required = [
-            'MMSI', 'BaseDateTime', 'LAT', 'LON', 'SOG', 'COG', 'Heading'
-        ]
 
         # Reduce to area of interest
         self.select_spatial()
@@ -188,17 +192,19 @@ class Basic_Clean(object):
     # MAIN FUNCTIONS
     def plot(self):
         """Plot data before and after its been cleaned"""
-        plot_mmsi_by_type(self.df_raw, "Raw")
-        plot_status(self.df_raw, "Raw")
-        plot_sog(self.df_raw, "Raw")
-        plot_cog(self.df_raw, "Raw")
-        plot_time_interval(self.df_raw, "Raw")
+        # plot_mmsi_by_type(self.df_raw, "Raw")
+        # plot_status(self.df_raw, "Raw")
+        # plot_sog(self.df_raw, "Raw")
+        # plot_cog(self.df_raw, "Raw")
+        # plot_time_interval(self.df_raw, "Raw")
 
         plot_mmsi_by_type(self.df, "Cleaned")
-        plot_status(self.df, "Cleaned")
-        plot_sog(self.df, "Cleaned")
+        # plot_status(self.df, "Cleaned")
+        # plot_sog(self.df, "Cleaned")
         plot_cog(self.df, "Cleaned")
-        plot_time_interval(self.df, "Cleaned")
+        # plot_time_interval(self.df, "Cleaned")
+        plot_acceleration(self.df)
+        plot_alteration(self.df)
 
     @print_reduction
     def clean_raw(self):
@@ -540,7 +546,7 @@ class Processor(object):
     def write_output(self):
         """Write to one processed CSV file"""
         self.replace_nan()
-        self.gdf.drop(columns=['BaseDateTime', 'Interval','Step_Distance'])
+        # self.gdf.drop(columns=['BaseDateTime', 'Interval','Step_Distance'])
         columns = [
             'MMSI',
             'Trip', 
@@ -562,10 +568,10 @@ class Processor(object):
             'Status', 
             'Length',
         ]
-        self.gdf = self.gdf[columns]
-        self.gdf.reindex(columns)
-        self.gdf.sort_values(['MMSI', 'Trip', 'DateTime'], inplace=True)
-        self.gdf.to_csv(self.csv_processed, index=False, header=False)
+        self.output = self.gdf[columns]
+        self.output = self.output.reindex(columns)
+        self.output.sort_values(['MMSI', 'Trip', 'DateTime'], inplace=True)
+        self.output.to_csv(self.csv_processed, index=False, header=False)
 
 
   
