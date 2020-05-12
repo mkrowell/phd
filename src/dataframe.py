@@ -15,17 +15,14 @@
 import angles
 import datetime
 import geopandas as gpd
+import matplotlib.pyplot as plt
 import numpy as np
 import os
-from os.path import abspath, basename, dirname, exists, join
+from os.path import abspath, dirname, exists, join
 import pandas as pd
 import seaborn as sns
 from shapely.geometry import Point
 import yaml
-
-import matplotlib.pyplot as plt 
-import pyplot_themes as themes
-
 
 import src
 from src import print_reduction, print_reduction_gdf, time_all
@@ -41,7 +38,7 @@ PLOTS_DIR = abspath(join(dirname(__file__) ,'..','reports','figures'))
 # ------------------------------------------------------------------------------
 # SETTINGS
 # ------------------------------------------------------------------------------
-themes.theme_paul_tol()
+plt.style.use('seaborn')
 sns.set(color_codes=True)
 
 
@@ -49,7 +46,7 @@ sns.set(color_codes=True)
 # SPATIAL FUNCTIONS
 # ------------------------------------------------------------------------------
 def azimuth_utm(point1, point2):
-    """Return the azimuth from point1 to point2"""
+    """Return the azimuth from point1 to point2 in UTM"""
     east = point2.x - point1.x
     north = point2.y - point1.y
     return np.degrees(np.arctan2(east, north))
@@ -68,56 +65,88 @@ def angle_difference(angle1, angle2):
 # ------------------------------------------------------------------------------
 def save_plot(ax, filepath):
     """Save and close figure"""
-    ax.xaxis.set_tick_params(labelsize=20)
-    ax.yaxis.set_tick_params(labelsize=20)
-
     if exists(filepath):
             os.remove(filepath)
     plt.tight_layout() 
     plt.subplots_adjust(top=0.9, bottom=0.2)
     plt.savefig(filepath)
 
-def plot_mmsi_by_type(df, prepend):
+def plot_type(df, prepend):
     """Create a chart of the number of unique vessels per type"""
-    filename = f"{prepend} - Unique MMSI by Vessel Type"
+    filename = f"{prepend}_Type"
     fig, ax = plt.subplots()
     unique = df[['MMSI', 'VesselType']].drop_duplicates(keep='first')
-    unique['VesselType'].value_counts().plot(kind='bar', alpha=0.75, rot=0)
-
-    ax.set_ylabel('Number of Unique MMSI', fontsize=20)
-    save_plot(ax, join(PLOTS_DIR, filename))
-    plt.close(fig)
-
-def plot_status(df, prepend):
-    """Create a chart of status observations"""
-    filename = f"{prepend} - Navigation Status"
-    fig, ax = plt.subplots()
-    df['Status'].value_counts().plot(kind='bar', alpha=0.75)
-
-    ax.set_ylabel('Number of Data Points', fontsize=20)
+    sns.countplot('VesselType', data=unique, palette="Paired")
+    ax.set_ylabel('Number of Unique MMSI')
     save_plot(ax, join(PLOTS_DIR, filename))
     plt.close(fig)
 
 def plot_sog(df, prepend):
     """Create a chart of SOGs observed"""
-    filename = f'{prepend} - SOG.png'
-
+    filename = f'{prepend}_SOG.png'
     fig, ax = plt.subplots()
-    df.groupby('SOG').count()['BaseDateTime'].plot()
-    ax.set_ylabel('Number of Data Points', fontsize=20)
-
+    sns.distplot(df['SOG'], kde=False).set_title(f'{prepend} Data')
+    ax.set_ylabel('Number of Data Points')
+    ax.set_xlabel('SOG (nautical miles/hour)')
+    if prepend == 'Raw':
+        plt.xlim(-50, 50)
+    else:
+        plt.xlim(0, 50)
     filepath = join(PLOTS_DIR, filename)
     save_plot(ax, filepath)
     plt.close(fig)
 
+def plot_acceleration(df):
+    """Create a chart of acceleration observed"""
+    filename = f'Acceleration.png'
+    filepath = join(PLOTS_DIR, filename)
+    fig, ax = plt.subplots()
+    sns.distplot(df['Acceleration'], kde=False)
+    ax.set_ylabel('Number of Data Points')
+    ax.set_xlabel('Acceleration (nautical miles/seconds^2)')
+    plt.xlim(-400, 400)
+    save_plot(ax, filepath)
+    plt.close(fig)
+
+def plot_alteration(df):
+    """Create a chart of alteration observed"""
+    filename = f'Alteration_Degrees.png'
+    filepath = join(PLOTS_DIR, filename)
+    fig, ax = plt.subplots()
+    sns.distplot(df['Alteration_Degrees'], kde=False)
+    ax.set_ylabel('Number of Data Points')
+    ax.set_xlabel('Alteration (Degrees)')
+    plt.xlim(-180, 180)
+    save_plot(ax, filepath)
+    plt.close(fig)
+
+def plot_trip_length(df):
+    """Create a chart of trip length observed"""
+    filename = f'Trip_Length.png'
+    filepath = join(PLOTS_DIR, filename)
+    fig, ax = plt.subplots()
+    trips = df.pivot(index='MMSI', values='Step_Distance', aggfunc=np.sum).reset_index()
+    sns.distplot(trips['Step_Distance'], kde=False)
+    ax.set_ylabel('Number of Trips')
+    ax.set_xlabel('Trip Length (m)')
+    save_plot(ax, filepath)
+    plt.close(fig)
+
+
+
+
+
+
 def plot_cog(df, prepend):
     """Create a chart of COGs observed by type"""
-    filename = f'{prepend} - COG.png'   
+    filename = f'{prepend}_COG.png'   
     groups = df.groupby('VesselType')['COG']
+    group_list = [(index, group) for index, group in groups if len(group) > 0]
     fig = plt.figure()
     ax = fig.add_subplot(111, projection='polar')
-    for k, v in groups:
+    for k, v in group_list:
         radians = np.deg2rad(v)
+        sns.distplot(radians, kde=False).set_title('f{prepend} Data')
         radians.hist(label=k, alpha=0.3, ax=ax)
 
     ax.set_theta_zero_location("N")
@@ -128,15 +157,14 @@ def plot_cog(df, prepend):
     save_plot(ax, join(PLOTS_DIR, filename))
     plt.close(fig)
 
-def plot_time_interval(df, prepend):
+def plot_time(df, prepend):
     """Create a chart of time intervals observed"""
-    filename = f'{prepend} - Time Interval.png'
-
-    fig, ax = plt.subplots()
-    df['Interval'].hist()
-    ax.set_ylabel('Number of Data Points', fontsize=20)
-
+    filename = f'{prepend}_ToD.png'
     filepath = join(PLOTS_DIR, filename)
+    fig, ax = plt.subplots()
+    sns.distplot(df['BaseDateTime'], kde=False)
+    ax.set_ylabel('Number of Data Points')
+    ax.set_xlabel('Time of Day (UTC)')
     save_plot(ax, filepath)
     plt.close(fig)
 
@@ -148,7 +176,7 @@ def plot_time_interval(df, prepend):
 class Basic_Clean(object):
 
     """
-    Clean and reduce the NAIS data.
+    Clean NAIS data
     """
 
     def __init__(self, csvFile, minPoints, lonMin, lonMax, latMin, latMax):
@@ -177,62 +205,45 @@ class Basic_Clean(object):
         self.df['Heading'].replace(511, np.nan, inplace=True)
 
         # Standardize vessel type and cog
-        self.map_vessel_types()
-        self.normalize_angles()
+        self._map_vessel_types()
+        self._normalize_angles()
 
         # Reduce to area of interest
-        self.select_spatial()
-
-        # Calculate time interval - for plotting
-        self.time_interval()
+        self._select_spatial()
     
         # Save raw df for plotting purposes
         self.df_raw = self.df.copy()
 
     # MAIN FUNCTIONS
-    def plot(self):
-        """Plot data before and after its been cleaned"""
-        # plot_mmsi_by_type(self.df_raw, "Raw")
-        # plot_status(self.df_raw, "Raw")
-        # plot_sog(self.df_raw, "Raw")
-        # plot_cog(self.df_raw, "Raw")
-        # plot_time_interval(self.df_raw, "Raw")
-
-        plot_mmsi_by_type(self.df, "Cleaned")
-        # plot_status(self.df, "Cleaned")
-        # plot_sog(self.df, "Cleaned")
-        plot_cog(self.df, "Cleaned")
-        # plot_time_interval(self.df, "Cleaned")
-        plot_acceleration(self.df)
-        plot_alteration(self.df)
-
     @print_reduction
     def clean_raw(self):
         """
         Select the area of interest, remove duplicate information, remove
         contradictory information, remove invalid IDs, normalize, write output.
         """
-        self.drop_null()
-        self.drop_duplicate_rows()
+        self._drop_null()
+        self._drop_duplicate_rows()
 
-        self.drop_duplicate_keys()
-        self.drop_inconsistent_info()
-        self.drop_columns()
+        self._drop_duplicate_keys()
+        self._drop_inconsistent_info()
+        self._drop_columns()
         
-        self.drop_bad_mmsi()
-        self.filter_sog(3)
-        self.filter_time(3)
+        self._drop_bad_mmsi()
+        self._filter_sog(3)
+        self._filter_time(3)
        
-        self.drop_sparse_mmsi()
+        self._drop_sparse_mmsi()
 
-        self.filter_type()
-        self.filter_status()
+        self._filter_type()
+        self._filter_status()
+
+        self._plot()
        
         self.df.sort_values(['MMSI', 'BaseDateTime'], inplace=True)
         self.df.to_csv(self.cleaned, index=False, header=True)
 
     # DATAFRAME CLEANING 
-    def select_spatial(self):
+    def _select_spatial(self):
         """Limit data to bounding box of interest."""
         self.df = self.df[
             (self.df['LON'].between(self.lonMin, self.lonMax)) &
@@ -240,7 +251,7 @@ class Basic_Clean(object):
         ].copy()
 
     @print_reduction
-    def drop_null(self):
+    def _drop_null(self):
         """
         Drop rows with nulls in all the required columns. 
         No loss of information.
@@ -249,14 +260,14 @@ class Basic_Clean(object):
         self.df.dropna(how='any', subset=self.required, inplace=True)
 
     @print_reduction
-    def drop_duplicate_rows(self):
+    def _drop_duplicate_rows(self):
         """
         Remove entirely duplicated rows. No loss of information.
         """
         self.df.drop_duplicates(keep='first', inplace=True)
 
     @print_reduction
-    def drop_duplicate_keys(self):
+    def _drop_duplicate_keys(self):
         """
         MMSI, BaseDateTime pairs must be unique. Can't calculate step 
         calculations with duplicate timestamps. Drop both duplicate rows.
@@ -265,7 +276,7 @@ class Basic_Clean(object):
         self.df.drop_duplicates(subset=key, keep=False, inplace=True)
 
     @print_reduction
-    def drop_inconsistent_info(self):
+    def _drop_inconsistent_info(self):
         """
         Confirm that a MMSI is associated with only one name, dimension.
         A mix of vessels using the same MMSI will not be included.
@@ -277,45 +288,44 @@ class Basic_Clean(object):
         self.df = mmsi.filter(lambda g: g['Length'].nunique()<=1)
         self.df = mmsi.filter(lambda g: g['Width'].nunique()<=1)
 
-    def drop_columns(self):
+    def _drop_columns(self):
         """Remove unneccessary columns."""
         unused = ['CallSign', 'IMO', 'Cargo', 'Width', 'Draft']
         self.df.drop(columns=unused, inplace=True)
 
     @print_reduction
-    def drop_bad_mmsi(self):
-        """MMSI numbers should be 9 digits and between a given range."""
+    def _drop_bad_mmsi(self):
+        """
+        MMSI numbers should be 9 digits and between a given range.
+        Remove any rows with MMSIs outside of that range."""
         condRange = self.df['MMSI'].between(201000000, 775999999)
         self.df = self.df[condRange]
 
     @print_reduction
-    def filter_sog(self, limit):
+    def _filter_sog(self, limit):
         """Limit to points with > limit SOG."""
         self.df['SOG'] = self.df['SOG'].abs()
         self.df = self.df[self.df['SOG'] > limit]
     
-    def time_interval(self):
-        """Calculate time interval between points"""
+    @print_reduction
+    def _filter_time(self, limit):
+        """Limit to points less than 3 minutes from prior data point."""
         col = 'Interval'
         group = self.df.sort_values(['MMSI', 'BaseDateTime']).groupby('MMSI')
         
         self.df[col] = group['BaseDateTime'].diff()
         self.df[col].fillna(datetime.timedelta(seconds=60), inplace=True)
         self.df[col] = self.df[col].astype('timedelta64[s]')
-
-    @print_reduction
-    def filter_time(self, limit):
-        """Limit to points less than 3 minutes from prior data point."""
         self.df = self.df[self.df['Interval'] < limit*60]
 
     @print_reduction
-    def drop_sparse_mmsi(self):
+    def _drop_sparse_mmsi(self):
         """Remove MMSIs with few data points."""
         self.df = self.df.groupby(['MMSI']).filter(
             lambda g: len(g)>self.minPoints
         )
     
-    def normalize_angles(self):
+    def _normalize_angles(self):
         """Normalize COG to an angle between [0, 360)."""
         self.df['COG'] = self.df['COG'].apply(
             lambda x: angles.normalize(x, 0, 360)
@@ -324,7 +334,7 @@ class Basic_Clean(object):
             lambda x: angles.normalize(x, 0, 360)
         )
 
-    def map_vessel_types(self):
+    def _map_vessel_types(self):
         """Map codes to categories."""
         type_dict = abspath(join(dirname(__file__), 'vessel_types.yaml'))
         with open("src\\vessel_types.yaml", 'r') as stream:
@@ -336,13 +346,13 @@ class Basic_Clean(object):
         self.df['VesselType'] = self.df['VesselType'].astype('category')
 
     @print_reduction
-    def filter_type(self):
+    def _filter_type(self):
         """Filter non-normal operating vessels"""
         types = ['tanker', 'cargo', 'ferry']
         self.df = self.df[self.df['VesselType'].isin(types)]
 
     @print_reduction
-    def filter_status(self):
+    def _filter_status(self):
         """Filter non-normal stauts"""
         status = [
             'not under command', 
@@ -354,7 +364,13 @@ class Basic_Clean(object):
         ]
         self.df = self.df[~self.df['Status'].isin(status)]
     
+    def _plot(self):
+        """Plot change in speed"""
+        plot_sog(self.df_raw, "Raw")
+        plot_type(self.df_raw, "Raw")
+        plot_sog(self.df, "Cleaned")
       
+
 # ------------------------------------------------------------------------------
 # QUALITY CHECK
 # ------------------------------------------------------------------------------
@@ -421,6 +437,12 @@ class Processor(object):
 
         self.normalize_time()
         self.write_output()
+        self._plot()
+
+    def plot(self):
+        """Plot data before and after its been cleaned"""
+        plot_acceleration(self.gdf)
+        plot_alteration(self.gdf)
 
                 
     # PREPROCESSING ------------------------------------------------------------
@@ -546,7 +568,6 @@ class Processor(object):
     def write_output(self):
         """Write to one processed CSV file"""
         self.replace_nan()
-        # self.gdf.drop(columns=['BaseDateTime', 'Interval','Step_Distance'])
         columns = [
             'MMSI',
             'Trip', 
@@ -595,161 +616,48 @@ class Processor(object):
 # ------------------------------------------------------------------------------
 # DATAFRAMES
 
+def mmsi_plot(self):
+    '''Plot raw trajectory for each MMSI.'''
+    for name, group in self.grouped_trip:
+        try:
+            mmsi = group['MMSI'].unique()[0]
+            print('Plotting MMSI %s' % mmsi)
+            data = [
+                ['LAT'],
+                ['LON'],
+                ['SOG'],
+                ['COG'],
+                ['Time Interval']
+            ]
+            legend = [False, False, 'full', 'full', False]
+            linestyles = ["","-", "--"]
 
+            # Create plots
+            fig, axes = plt.subplots(5, 1, sharex='col', figsize=(8, 11))
+            fig.suptitle("MMSI: {0}".format(mmsi), fontsize=14)
+            for i in range(5):
+                for j in range(len(data[i])):
+                    sns.lineplot(
+                        x='BaseDateTime',
+                        y=data[i][j],
+                        style=linestyle[j],
+                        data=group,
+                        palette=sns.color_palette("paired", len(data[i])),
+                        ax=axes[i],
+                        label=data[i][j],
+                        legend=legend[i]
+                    )
+                    axes[i].set_ylabel(data[i][0])
 
+            # Format plot area
+            plt.xticks(rotation=70)
+            plt.tight_layout()
+            fig.subplots_adjust(top=0.9)
 
-
-    def mmsi_plot(self):
-        '''Plot raw trajectory for each MMSI.'''
-        for name, group in self.grouped_trip:
-            try:
-                mmsi = group['MMSI'].unique()[0]
-                print('Plotting MMSI %s' % mmsi)
-                data = [
-                    ['LAT'],
-                    ['LON'],
-                    ['SOG'],
-                    ['COG'],
-                    ['Time Interval']
-                ]
-                legend = [False, False, 'full', 'full', False]
-                linestyles = ["","-", "--"]
-
-                # Create plots
-                fig, axes = plt.subplots(5, 1, sharex='col', figsize=(8, 11))
-                fig.suptitle("MMSI: {0}".format(mmsi), fontsize=14)
-                for i in range(5):
-                    for j in range(len(data[i])):
-                        sns.lineplot(
-                            x='BaseDateTime',
-                            y=data[i][j],
-                            style=linestyle[j],
-                            data=group,
-                            palette=sns.color_palette("paired", len(data[i])),
-                            ax=axes[i],
-                            label=data[i][j],
-                            legend=legend[i]
-                        )
-                        axes[i].set_ylabel(data[i][0])
-
-                # Format plot area
-                plt.xticks(rotation=70)
-                plt.tight_layout()
-                fig.subplots_adjust(top=0.9)
-
-                # Save to directory
-                plt.savefig(
-                    join(DIRECTORY_PLOTS, 'MMSI', 'Raw', '{0}.png'.format(mmsi))
-                )
-                plt.close()
-            except:
-                continue
-
-
-    # FIND ERRONEOUS DATA ------------------------------------------------------
-
-
-    # def mmsi_plot(self):
-    #     '''Plot raw trajectory for each MMSI.'''
-    #     for name, group in self.grouped_mmsi:
-    #         mmsi = group['MMSI'].unique()[0]
-    #         data = ['LAT', 'LON', 'SOG', 'COG', 'Time Interval']
-    #         # legend = ['full', False, False, False, False]
-    #         legend = [False, False, False, False, False]
-    #
-    #         # Create plots
-    #         fig, axes = plt.subplots(5, 1, sharex='col', figsize=(8, 11))
-    #         fig.suptitle("MMSI: {0}".format(mmsi), fontsize=14)
-    #         for i in range(0,5):
-    #             axes[i].set_ylabel(data[i])
-    #             sns.lineplot(
-    #                 x='BaseDateTime',
-    #                 y=data[i],
-    #                 # hue='In_Bound',
-    #                 data=group,
-    #                 # palette=sns.color_palette("cubehelix", 2),
-    #                 ax=axes[i],
-    #                 legend=legend[i]
-    #             )
-    #
-    #         # First plot with legend
-    #         # axes[0].legend(
-    #         #     loc='upper center',
-    #         #     bbox_to_anchor=(0.5, 1.35),
-    #         #     fancybox=True)
-    #
-    #         # Format plot area
-    #         plt.xticks(rotation=70)
-    #         plt.tight_layout()
-    #         fig.subplots_adjust(top=0.95)
-    #
-    #         # Save to directory
-    #         plt.savefig(
-    #             join(DIRECTORY_PLOTS, 'MMSI', 'Raw', '{0}.png'.format(mmsi))
-    #         )
-    #         plt.close()
-    #
-
-
-
-
-
-
-
-
-    # SUB-TRAJECTORIES ---------------------------------------------------------
-
-   
-
-  
-
-    # def mmsi_plot(self):
-    #     '''Plot raw trajectory for each MMSI.'''
-    #     # plt.style.use('dark_background')
-    #     for name, group in self.grouped_mmsi:
-    #         mmsi = group['MMSI'].unique()[0]
-    #         data = ['LAT', 'LON', 'SOG', 'COG', 'Time Interval']
-    #         legend = ['full', False, False, False, False]
-    #         ntracks = len(group['Trajectory'].unique())
-    #         # Create plots
-    #         fig, axes = plt.subplots(5, 1, sharex='col', figsize=(8, 11))
-    #         fig.suptitle("MMSI: {0}".format(mmsi), fontsize=14)
-    #         for i in range(0,5):
-    #             axes[i].set_ylabel(data[i])
-    #             sns.lineplot(
-    #                 x='BaseDateTime',
-    #                 y=data[i],
-    #                 hue='Trajectory',
-    #                 data=group,
-    #                 palette=sns.color_palette("cubehelix", ntracks),
-    #                 ax=axes[i],
-    #                 legend=legend[i]
-    #             )
-    #
-    #         # First plot with legend
-    #         axes[0].legend(
-    #             loc='upper center',
-    #             bbox_to_anchor=(0.5, 1.35),
-    #             ncol=12,
-    #             fancybox=True)
-    #
-    #         # Format plot area
-    #         plt.xticks(rotation=70)
-    #         plt.tight_layout()
-    #         fig.subplots_adjust(top=0.90)
-    #
-    #         # Save to directory
-    #         plt.savefig(
-    #             join(DIRECTORY_PLOTS, 'MMSI', 'Raw', '{0}.png'.format(mmsi))
-    #         )
-    #         plt.close()
-
-
-
-
-
-
-
-
-
-
+            # Save to directory
+            plt.savefig(
+                join(DIRECTORY_PLOTS, 'MMSI', 'Raw', '{0}.png'.format(mmsi))
+            )
+            plt.close()
+        except:
+            continue
