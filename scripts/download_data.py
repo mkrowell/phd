@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 .. script::
-    :language: Python Version 3.7.4
+    :language: Python Version 3.7.3
     :platform: Windows 10
     :synopsis: download shoreline, TSS, and NAIS data
 
@@ -25,7 +25,6 @@ import src
 # ------------------------------------------------------------------------------
 city = 'seattle'
 year = '2017' 
-# months = [str(i).zfill(2) for i in range(1, 13)]
 months = ['07']
 
 # ------------------------------------------------------------------------------
@@ -41,13 +40,11 @@ shore.download()
 tss = src.Shapefile_Download('tss')
 tss.download()
 
-# Download raw NAIS data from MarineCadastre for the given city and year 
-# and save it to the data directory.
+# Download raw NAIS data from MarineCadastre for the given city, year, 
+# and month and save it to the data directory.
 nais = src.NAIS_Download(city, year)
 for month in months:
     nais.month = month
     nais.download()
-    nais.clean_raw()
-    nais.processing()
 # Remove temporary folders
 nais.clean_up()
