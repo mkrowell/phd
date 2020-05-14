@@ -104,7 +104,7 @@ def plot_acceleration(df):
     sns.distplot(df['Acceleration'], kde=False)
     ax.set_ylabel('Number of Data Points')
     ax.set_xlabel('Acceleration (nautical miles/seconds^2)')
-    plt.xlim(-400, 400)
+    plt.xlim(-300, 300)
     save_plot(ax, filepath)
     plt.close(fig)
 
@@ -125,17 +125,33 @@ def plot_trip_length(df):
     filename = f'Trip_Length.png'
     filepath = join(PLOTS_DIR, filename)
     fig, ax = plt.subplots()
-    trips = df.pivot(index='MMSI', values='Step_Distance', aggfunc=np.sum).reset_index()
-    sns.distplot(trips['Step_Distance'], kde=False)
+    trips = df.pivot_table(index=['MMSI', 'Trip', 'VesselType'], values='Step_Distance', aggfunc=np.sum).reset_index()
+    cargo = trips.loc[trips['VesselType'] == 'cargo']
+    ferry = trips.loc[trips['VesselType'] == 'ferry']
+    tanker = trips.loc[trips['VesselType'] == 'tanker']
+    sns.distplot(cargo[['Step_Distance']], kde=True, hist=False, label="cargo")
+    sns.distplot(ferry[['Step_Distance']], kde=True, hist=False, label="ferry")
+    sns.distplot(tanker[['Step_Distance']], kde=True, hist=False, label="tanker")
     ax.set_ylabel('Number of Trips')
     ax.set_xlabel('Trip Length (m)')
+    plt.legend()
     save_plot(ax, filepath)
     plt.close(fig)
 
+def plot_step_length(df):
+    """Create a chart of step length observed"""
+    filename = f'Step_Length.png'
+    filepath = join(PLOTS_DIR, filename)
+    fig, ax = plt.subplots()
+    sns.distplot(df['Step_Distance']).set_title("Step Length")
+    ax.set_ylabel('Number of Steps')
+    ax.set_xlabel('Length (m)')
+    save_plot(ax, filepath)
+    plt.close(fig)
 
-
-
-
+def plot_latlon(df):
+    """create a distribution of lat/lon"""
+    sns.jointplot(x="LON", y="LAT", data=df, kind="kde")
 
 def plot_cog(df, prepend):
     """Create a chart of COGs observed by type"""
@@ -369,10 +385,10 @@ class Basic_Clean(object):
         plot_sog(self.df_raw, "Raw")
         plot_type(self.df_raw, "Raw")
         plot_sog(self.df, "Cleaned")
-      
+              
 
 # ------------------------------------------------------------------------------
-# QUALITY CHECK
+# TRIP GENERATION
 # ------------------------------------------------------------------------------
 @time_all
 class Processor(object):
@@ -421,32 +437,35 @@ class Processor(object):
         '''
         Detect suspicious data.
         '''
-        self.update_interval()
-        self.mark_trips()
-        self.drop_sparse_trips()
+        self._update_interval()
+        self._mark_trips()
+        self._drop_sparse_trips()
        
-        self.mark_distance(1.25)
+        self._mark_distance(1.25)
 
-        self.update_interval()
-        self.mark_trips()
-        self.drop_sparse_trips()
+        self._update_interval()
+        self._mark_trips()
+        self._drop_sparse_trips()
 
-        self.step_cog()
-        self.acceleration()
-        self.alteration()
+        self._step_cog()
+        self._acceleration()
+        self._alteration()
 
-        self.normalize_time()
-        self.write_output()
+        self._normalize_time()
+        self._write_output()
         self._plot()
 
-    def plot(self):
+    def _plot(self):
         """Plot data before and after its been cleaned"""
         plot_acceleration(self.gdf)
         plot_alteration(self.gdf)
+        plot_trip_length(self.gdf)
+        plot_latlon(self.gdf)
+        plot_step_length(self.gdf)
 
                 
     # PREPROCESSING ------------------------------------------------------------
-    def update_interval(self):
+    def _update_interval(self):
         """Update time interval after data cleaning."""
         self.gdf['Interval'] = self.grouped_mmsi['BaseDateTime'].diff()
         self.gdf['Interval'].fillna(
@@ -454,7 +473,7 @@ class Processor(object):
         )
         self.gdf['Interval'] = self.gdf['Interval'].astype('timedelta64[s]')
            
-    def mark_trips(self):
+    def _mark_trips(self):
         """Make trips at time breaks"""
         self.gdf['Break'] = np.where(
             (self.gdf['Interval'] == 0) | (self.gdf['Interval'] > 3*60), 
@@ -466,13 +485,13 @@ class Processor(object):
         self.gdf.drop(columns=['Break'], inplace=True)
 
     @print_reduction_gdf
-    def drop_sparse_trips(self):
+    def _drop_sparse_trips(self):
         """Remove MMSIs with few data points."""
         self.gdf = self.grouped_trip.filter(
             lambda g: len(g)>self.minPoints
         )
 
-    def step_distance(self):
+    def _step_distance(self):
         """Return distance between lat/lon positions."""
         def distance(df):
             df.reset_index(inplace=True)
@@ -485,9 +504,9 @@ class Processor(object):
         self.gdf['Step_Distance']/METERS_IN_NM
 
     @print_reduction_gdf
-    def mark_distance(self, limit):
+    def _mark_distance(self, limit):
         """Compare step_distance to speed*time. Remove suspicious data."""
-        self.step_distance()
+        self._step_distance()
         self.gdf['Expected_Distance'] = (
             (self.gdf['SOG']*self.gdf['Interval']*METERS_IN_NM)/3600
         )
@@ -500,7 +519,7 @@ class Processor(object):
         self.gdf = self.gdf[self.gdf['Outlier'] == 0]
         self.gdf.drop(columns=['Expected_Distance', 'Outlier'], inplace=True)
   
-    def step_cog(self):
+    def _step_cog(self):
         """Calculate the course between two position points."""
         def course_utm(df):
             df.reset_index(inplace=True)
@@ -527,7 +546,7 @@ class Processor(object):
             abs(self.gdf['Heading'] - self.gdf['Step_Azimuth']) - 180
         ))
         
-    def acceleration(self):
+    def _acceleration(self):
         """Add acceleration."""
         self.gdf['DS'] = self.grouped_trip['SOG'].diff()
         self.gdf['Acceleration'] = 3600*self.gdf['DS'].divide(
@@ -535,7 +554,7 @@ class Processor(object):
         self.gdf.drop(columns=['DS'], inplace=True)
         self.gdf['Acceleration'].fillna(method='bfill', inplace=True)
 
-    def alteration(self):
+    def _alteration(self):
         """Calculate change in heading."""
         def delta_heading(df):
             df.reset_index(inplace=True)
@@ -550,7 +569,7 @@ class Processor(object):
         self.gdf['Alteration_Cosine'] = np.cos(self.gdf['Alteration'])
         
     @print_reduction_gdf
-    def normalize_time(self):
+    def _normalize_time(self):
         '''Round time to nearest minute.'''
         self.gdf['DateTime'] = self.gdf['BaseDateTime'].dt.round('1min')
         self.gdf.drop_duplicates(
@@ -559,15 +578,15 @@ class Processor(object):
             inplace=True
         )
 
-    def replace_nan(self):
+    def _replace_nan(self):
         """Fill undefined values with default float value."""
         for col in ['Length', 'VesselType']:
             self.gdf[col].replace("", np.nan, inplace=True)
             self.gdf[col].replace(np.nan, -1, inplace=True)
 
-    def write_output(self):
+    def _write_output(self):
         """Write to one processed CSV file"""
-        self.replace_nan()
+        self._replace_nan()
         columns = [
             'MMSI',
             'Trip', 
@@ -579,6 +598,7 @@ class Processor(object):
             'SOG', 
             'COG', 
             'Heading',
+            'Step_Distance',
             'Step_Azimuth', 
             'Acceleration', 
             'Alteration', 
@@ -589,10 +609,10 @@ class Processor(object):
             'Status', 
             'Length',
         ]
-        self.output = self.gdf[columns]
-        self.output = self.output.reindex(columns)
-        self.output.sort_values(['MMSI', 'Trip', 'DateTime'], inplace=True)
-        self.output.to_csv(self.csv_processed, index=False, header=False)
+        self.gdf = self.gdf[columns]
+        self.gdf.reindex(columns)
+        self.gdf.sort_values(['MMSI', 'Trip', 'DateTime'], inplace=True)
+        self.gdf.to_csv(self.csv_processed, index=False, header=False)
 
 
   
