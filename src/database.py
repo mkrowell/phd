@@ -1,18 +1,19 @@
 #!/usr/bin/env python
-'''
+"""
 .. module::
     :language: Python Version 3.6.8
     :platform: Windows 10
     :synopsis: construct postgres database
 
 .. moduleauthor:: Maura Rowell <mkrowell@uw.edu>
-'''
+"""
 
 
 # ------------------------------------------------------------------------------
 # IMPORTS
 # ------------------------------------------------------------------------------
 from glob import glob
+import matplotlib.pyplot as plt
 import numpy as np
 import os
 from os.path import abspath, dirname, exists, join
@@ -20,15 +21,20 @@ import osgeo.ogr
 import pandas as pd
 from postgis.psycopg import register
 import psycopg2
-# from psycopg2 import sql
+import seaborn as sns
 import shutil
 import subprocess
 import tempfile
 import time
 import yaml
 
-from . import time_all
+from src import time_this, LOGGER
+from src.dataframe import save_plot
 
+
+PLOTS_DIR = abspath(join(dirname(__file__), "..", "reports", "figures"))
+plt.style.use("seaborn")
+sns.set(color_codes=True)
 
 # ------------------------------------------------------------------------------
 # BASE CLASSES
@@ -36,23 +42,22 @@ from . import time_all
 class Postgres_Connection(object):
 
     """
-    Open/close standard connection to the postgres database.
+    Open/close standard connection to the postgres database
     """
 
         # Create connection object to Postgres
     LOGGER.info("Connecting to postgres...")
     conn = psycopg2.connect(
-            host='localhost',
-            dbname='postgres',
-            user='postgres',
-            password=os.environ['PGPASSWORD']
+        host="localhost",
+        dbname="postgres",
+        user="postgres",
+        password=os.environ["PGPASSWORD"],
         )
 
         # Set standard properties and extensions
     with conn.cursor() as cur:
             cur.execute("SET timezone = 'UTC'")
             cur.execute("CREATE EXTENSION IF NOT EXISTS postgis")
-        # cur.execute("CREATE EXTENSION IF NOT EXISTS timescaledb")
         conn.commit()
 
         # Enable PostGIS extension
@@ -91,18 +96,16 @@ class Postgres_Connection(object):
             raise err    
 
     def close_connection(self):
-        """
-        Close the database connection, if open.
-        """
+        """Close the database connection, if open"""
         if Postgres_Connection.conn:
             Postgres_Connection.conn.close()
-            LOGGER.info('Database connection closed.')
+            LOGGER.info("Database connection closed.")
 
 
 class Postgres_Table(Postgres_Connection):
 
     """
-    Base class for Postgres tables. 
+    Base class for Postgres tables
     """
 
     def __init__(self, table):
@@ -112,12 +115,12 @@ class Postgres_Table(Postgres_Connection):
         self.table = table
         self.srid = 32610
 
-    def run_DDL(self, query):
+    def run_query(self, query):
         """
         Execute a DDL SQL statement and commit it to the database.
         
         Args:
-            query (string): A Data Definition Language SQL statement.
+            query (string): An SQL statement
         """
         with self.conn.cursor() as cur:
             try:
@@ -137,20 +140,20 @@ class Postgres_Table(Postgres_Connection):
         
         Args:
             filepath (string, optional): Path to the shapefile that is to 
-                be created as a table. Defaults to None.
+                be created as a table. Defaults to None
             columns (string, optional): SQL statement defining the columns 
-                of the table. Defaults to None.
+                of the table. Defaults to None
         """
         if filepath:
             cmd = f'"C:\\Program Files\\PostgreSQL\\12\\bin\\shp2pgsql.exe" -s 4326 -d {filepath} {self.table} | psql -d postgres -U postgres -q'
-            LOGGER.info(f'Constructing {self.table} from {filepath}...')
+            LOGGER.info(f"Constructing {self.table} from {filepath}...")
             subprocess.call(cmd, shell=True)
         elif columns:
-            sql = f'CREATE TABLE IF NOT EXISTS {self.table} ({columns})'
-            LOGGER.info(f'Constructing {self.table} from columns...')
-            self.run_DDL(sql)
+            sql = f"CREATE TABLE IF NOT EXISTS {self.table} ({columns})"
+            LOGGER.info(f"Constructing {self.table} from columns...")
+            self.run_query(sql)
         else:
-            raise UserWarning('You must provide a filepath or column defintions.')
+            raise UserWarning("You must provide a filepath or column defintions.")
 
     def drop_table(self, table=None):
         """
@@ -160,13 +163,13 @@ class Postgres_Table(Postgres_Connection):
         table is dropped.
         
         Args:
-            table (string, optional): Name of table to be dropped.
+            table (string, optional): Name of table to be dropped
         """
         if table is None:
             table = self.table
-        sql = f'DROP TABLE IF EXISTS {table}'
-        LOGGER.info(f'Dropping table {table}...')
-        self.run_DDL(sql)
+        sql = f"DROP TABLE IF EXISTS {table}"
+        LOGGER.info(f"Dropping table {table}...")
+        self.run_query(sql)
 
     def copy_data(self, csv_file):
         """
@@ -174,13 +177,13 @@ class Postgres_Table(Postgres_Connection):
         
         Args:
             csv_file (string): Filepath to the csv data 
-                that is to be copied into the table.
+                that is to be copied into the table
         """
-        with open(csv_file, 'r') as csv:
-            LOGGER.info(f'Copying {csv_file} to {self.table}...')
+        with open(csv_file, "r") as csv:
+            LOGGER.info(f"Copying {csv_file} to {self.table}...")
             with self.conn.cursor() as cur:
                 try:
-                    cur.copy_from(csv, self.table, sep=',')
+                    cur.copy_from(csv, self.table, sep=",")
                     self.conn.commit()
                 except psycopg2.DatabaseError as err:
                     self.conn.rollback()
@@ -188,59 +191,57 @@ class Postgres_Table(Postgres_Connection):
 
     def add_column(self, name, datatype=None, geometry=False, default=None):
         """
-        Add column to the table with the given datatype and default.
+        Add column to the table with the given datatype and default
         
         Args:
             name (string): Name of the new column.
             datatype (type, optional): Postgresql/PostGIS datatype. 
-                Defaults to None.
+                Defaults to None
             geometry (bool, optional): Whether the datatype is a geometry. 
-                Defaults to False.
+                Defaults to False
             default (value, optional): The default value of the column. 
-                Should be the same type as datatype. Defaults to None.
+                Should be the same type as datatype. Defaults to None
         """
         # Handle geometry types
-        datatype_str = f'{datatype}'
+        datatype_str = f"{datatype}"
         if geometry:
-            datatype_str = f'geometry({datatype}, {self.srid})'
+            datatype_str = f"geometry({datatype}, {self.srid})"
        
         # Handle default data types
-        default_str = ''
+        default_str = ""
         if default:
-            default_str = f'DEFAULT {default}'
+            default_str = f"DEFAULT {default}"
 
         # Entire SQL string
         sql = f"""
             ALTER TABLE {self.table} 
-            ADD COLUMN IF NOT EXISTS {name} {datatype_str}
-            {default_str}
+            ADD COLUMN IF NOT EXISTS {name} {datatype_str} {default_str}
         """
 
-        LOGGER.info(f'Adding {name} ({datatype}) to {self.table}...')
-        self.run_DDL(sql)
+        LOGGER.info(f"Adding {name} ({datatype}) to {self.table}...")
+        self.run_query(sql)
 
     def drop_column(self, column):
         """
-        Drop column from the table, if column exists.
+        Drop column from the table, if column exists
         
         Args:
-            column (string): Name of the column to be dropped.
+            column (string): Name of the column to be dropped
         """
-        sql = f'ALTER TABLE {self.table} DROP COLUMN IF EXISTS {column}'
-        LOGGER.info(f'Dropping column {column}...')
-        self.run_DDL(sql)
+        sql = f"ALTER TABLE {self.table} DROP COLUMN IF EXISTS {column}"
+        LOGGER.info(f"Dropping column {column}...")
+        self.run_query(sql)
 
     def add_point(self, name, lon, lat, time=None):
         """
-        Make the given column a POINT/POINTM geometry.
+        Make the given column a POINT/POINTM geometry
         
         Args:
             name (string): Name of existing column to be made into Point 
-                geometry.
-            lon (string): Name of the column containing the longitude of Point.
-            lat (string): Name of the column containing the latitude of Point.
+            lon (string): Name of the column containing the longitude of Point
+            lat (string): Name of the column containing the latitude of Point
             time (string, optional): Name of the column containing the time 
-                of Point. Defaults to None.
+                of Point. Defaults to None
         """
         if time:
             sql = f"""
@@ -255,11 +256,11 @@ class Postgres_Table(Postgres_Connection):
                 UPDATE {self.table}
                 SET {name} = ST_SetSRID(ST_MakePoint({lon}, {lat}), {self.srid})
             """
-        self.run_DDL(sql)
+        self.run_query(sql)
 
     def project_column(self, column, datatype, new_srid):
         """
-        Convert the SRID of the geometry column.
+        Convert the SRID of the geometry column
         
         Args:
             column (sting): Name of the column to project.
@@ -272,8 +273,8 @@ class Postgres_Table(Postgres_Connection):
             TYPE Geometry({datatype}, {new_srid})
             USING ST_Transform({column}, {new_srid})
         """
-        LOGGER.info(f'Projecting {column} from {self.srid} to {new_srid}...')
-        self.run_DDL(sql)
+        LOGGER.info(f"Projecting {column} from {self.srid} to {new_srid}...")
+        self.run_query(sql)
 
     def add_index(self, name, field=None, btree=False, gist=False):
         """
@@ -281,73 +282,74 @@ class Postgres_Table(Postgres_Connection):
         is None, update the existing index.
         
         Args:
-            name (string): Name of the new index. Default None.
-            field (string, optional): Column on which to build the index.
+            name (string): Name of the new index. Default None
+            field (string, optional): Column on which to build the index
         """
         if field is None:
             sql = f"REINDEX {name}"
-            LOGGER.info(f'Updating index on {field}...')
+            LOGGER.info(f"Updating index on {field}...")
         else:
-            kind_str = ''
+            kind_str = ""
             if gist:
-                kind_str = 'USING GiST'                
+                kind_str = "USING GiST"
             if btree:
-                kind_str = 'USING btree'                
+                kind_str = "USING btree"
 
             sql = f"""
                     CREATE INDEX IF NOT EXISTS {name}
                     ON {self.table} {kind_str} ({field})
                 """
-            LOGGER.info(f'Adding index on {field}...')
-        self.run_DDL(sql)
+            LOGGER.info(f"Adding index on {field}...")
+        self.run_query(sql)
 
     def reduce_table(self, column, relationship, value):
         """
-        Drop rows that meet condition.
+        Drop rows that meet condition
         
         Args:
-            column (string): column to test condition on.
+            column (string): column to test condition on
             relationship (string): =, <, > !=, etc.
-            value (string, number): value to use in condition.
+            value (string, number): value to use in condition
         """
-        LOGGER.info(f'Dropping {column} {relationship} {value} from {self.table}...')
         if isinstance(value, str):
             sql_delete = "DELETE FROM {0} WHERE {1} {2} '{3}'"
         else:
             sql_delete = "DELETE FROM {0} WHERE {1} {2} {3}"
         sql = sql_delete.format(self.table, column, relationship, value)
-        self.run_DDL(sql)
+        LOGGER.info(f"Dropping {column} {relationship} {value} from {self.table}...")
+        self.run_query(sql)
         
     def remove_null(self, col):
         """
         Remove rows in the table that have a Null in the col
         """
-        LOGGER.info(f'Deleting null rows from {self.table}...')
         sql = f"""DELETE FROM {self.table} WHERE {col} IS NULL"""
-        self.run_DDL(sql)
+        LOGGER.info(f"Deleting null rows from {self.table}...")
+        self.run_query(sql)
 
     def add_local_time(self, timezone="america/los_angeles"):
         """
-        Add column containing local time.
+        Add column containing local time
 
         Args:
             timezone (string): timezone to add time for. Defaults to
                 america/los_angles        
         """        
-        name = 'datetime_local'
-        self.add_column(name, datatype='timestamptz')
+        name = "datetime_local"
+        self.add_column(name, datatype="timestamptz")
         sql = f"""
             UPDATE {self.table}
             SET {name} = datetime at time zone 'utc' at time zone '{timezone}'
         """
-        self.run_DDL(sql)
+        LOGGER.info(f"Updating {name} with timezone...")
+        self.run_query(sql)
 
     def table_dataframe(self, table=None, select_col=None, where_cond=None):
         """Return Pandas dataframe of table"""
         if table is None:
             table = self.table
         if select_col is None:
-            select_col = '*'
+            select_col = "*"
         sql = f"""SELECT {select_col} FROM {table}"""
 
         if where_cond:
@@ -355,6 +357,10 @@ class Postgres_Table(Postgres_Connection):
 
         self.cur.execute(sql)
         column_names = [desc[0] for desc in self.cur.description]
+        LOGGER.info(
+            f"Constructing dataframe for {self.table} with columns "
+            f"{select} and where condition {where_cond}..."
+        )
         return pd.DataFrame(self.cur.fetchall(), columns=column_names)
 
  
@@ -403,8 +409,8 @@ class Points_Table(Postgres_Table):
         """
         PostGIS PointM geometry to the database.
         """
-        self.add_column('geom', datatype='POINTM', geometry=True)
-        self.add_point('geom', 'lon_utm', 'lat_utm', "date_part('epoch', datetime)")
+        self.add_column("geom", datatype="POINTM", geometry=True)
+        self.add_point("geom", "lon_utm", "lat_utm", "date_part('epoch', datetime)")
 
     def add_tss(self, tss):
         """
@@ -413,8 +419,8 @@ class Points_Table(Postgres_Table):
         Args:
             tss (postgres_table): table representing the TSS
         """
-        name = 'in_tss'
-        self.add_column(name, datatype='boolean', default='FALSE')
+        name = "in_tss"
+        self.add_column(name, datatype="boolean", default="FALSE")
         sql = f"""
             UPDATE {self.table}
             SET {name} = TRUE
@@ -427,7 +433,14 @@ class Points_Table(Postgres_Table):
             WHERE {self.table}.lat=tssTest.lat
             AND {self.table}.lon=tssTest.lon
         """
-        self.run_DDL(sql)
+        self.run_query(sql)
+
+    def plot_tss(self):
+        """Plot count of in versus out of TSS by vessel type"""
+        df = self.table_dataframe()
+        sns.countplot("in_tss", data=df, palette="Paired", hue="VesselType")
+        save_plot(join(PLOTS_DIR, "TSS"))
+        plt.close(fig)
 
 
 class Tracks_Table(Postgres_Table):
@@ -448,7 +461,7 @@ class Tracks_Table(Postgres_Table):
 
     def convert_to_tracks(self, points):
         """Add LINESTRING for each MMSI, TrackID."""
-        LOGGER.info('Creating tracks from points...')
+        LOGGER.info("Creating tracks from points...")
         sql = f"""
             CREATE TABLE {self.table} AS
             SELECT
@@ -462,16 +475,16 @@ class Tracks_Table(Postgres_Table):
             GROUP BY MMSI, Trip, VesselType
             HAVING COUNT(*) > 2
         """
-        self.run_DDL(sql)
+        self.run_query(sql)
 
     def add_length(self):
         """Add track length"""
-        self.add_column('length', 'float(4)', geometry=False)
+        self.add_column("length", "float(4)", geometry=False)
         sql = f"""
             UPDATE {self.table}
             SET length = ST_Length(track)
         """
-        self.run_DDL(sql)
+        self.run_query(sql)
 
 
 class CPA_Table(Postgres_Table):
@@ -515,27 +528,27 @@ class CPA_Table(Postgres_Table):
             ON t1.period && t2.period
             AND t1.mmsi != t2.mmsi
         """
-        LOGGER.info(f'Joining {self.input} with itself to make {self.table}...')
-        self.run_DDL(sql)
+        LOGGER.info(f"Joining {self.input} with itself to make {self.table}...")
+        self.run_query(sql)
 
     @time_this
     def cpa_time(self):
         """Add time when CPA occurs"""
-        col = 'cpa_time'
-        self.add_column(col, 'TIMESTAMP')
+        col = "cpa_time"
+        self.add_column(col, "TIMESTAMP")
         sql = f"""
             UPDATE {self.table}
             SET {col} = to_timestamp(cpa_epoch)::timestamptz
         """
-        LOGGER.info(f'Updating column {col}...')
-        self.run_DDL(sql)
+        LOGGER.info(f"Updating column {col}...")
+        self.run_query(sql)
 
     @time_this
     def cpa_points(self):
         """Add track points where CPA occurs"""
         for i in [1, 2]:
             col = f"cpa_point_{i}"
-            self.add_column(col, 'POINTM', geometry=True)
+            self.add_column(col, "POINTM", geometry=True)
         sql = f"""
             UPDATE {self.table}
                 SET {col} = ST_Force3DM(
@@ -545,25 +558,25 @@ class CPA_Table(Postgres_Table):
                     )
                     )
         """
-            LOGGER.info(f'Updating column {col}...')
-        self.run_DDL(sql)
+            LOGGER.info(f"Updating column {col}...")
+            self.run_query(sql)
     
     @time_this
     def cpa_line(self):
         """Add line between CPA points"""
-        col = 'cpa_line'
-        self.add_column(col, 'LINESTRINGM', geometry=True)
+        col = "cpa_line"
+        self.add_column(col, "LINESTRINGM", geometry=True)
         sql = f"""
             UPDATE {self.table}
             SET {col} = ST_MakeLine(cpa_point_1, cpa_point_2)
         """
-        LOGGER.info(f'Updating column {col}...')
-        self.run_DDL(sql)
+        LOGGER.info(f"Updating column {col}...")
+        self.run_query(sql)
 
     @time_this
     def delete_shore_cross(self):
         """Delete CPAs that line on shore."""
-        LOGGER.info('Deleting shore intersects from {0}...'.format(self.table))
+        LOGGER.info("Deleting shore intersects from {0}...".format(self.table))
         sql = f"""
             DELETE FROM {self.table} c
             USING {self.shore} s
@@ -773,7 +786,7 @@ class Encounters_Table(Postgres_Table):
     @time_this
     def cpa_points(self):
         """Make pairs of tracks that happen in same time interval"""
-        LOGGER.info('Joining points with cpas to make encounter table...')
+        LOGGER.info("Joining points with cpas to make encounter table...")
         sql = f"""
             CREATE TABLE {self.table} AS
             SELECT
@@ -830,49 +843,110 @@ class Encounters_Table(Postgres_Table):
                 ON p2.mmsi = c.mmsi_2
                 AND p2.datetime = p.datetime
         """
-        self.run_DDL(sql)
+        self.run_query(sql)
     
     @time_this
-    def plot_domain(self, tss=True):
+    def plot_domain_type(self, tss=None):
         """Plot CPA ship domain"""
+        if tss is None:
+            self.df = self.table_dataframe()
+            name = "Ship_Domain"
         if tss:
-            df = self.table_dataframe(where_cond="cpa_distance < 3000")
-        else:
-            df = self.table_dataframe(where_cond="cpa_distance < 3000 and tss_1 = False and tss_2 = False")
-        df["r"] = np.deg2rad(df['bearing_12'])
+            self.df = self.table_dataframe(
+                where_cond="tss_1 = True and tss_2 = True"
+            )
+            name = "Ship_Domain_Inside_TSS"
+        elif tss is False:
+            self.df = self.table_dataframe(
+                where_cond="cpa_distance < 3000 and tss_1 = False and tss_2 = False"
+            )
+            name = "Ship_Domain_Outside_TSS"
 
-        g = sns.FacetGrid(
-            df, 
-            col="type_1", 
-            row = "type_2", 
-            subplot_kws=dict(projection='polar'),
-            sharex=False, 
-            sharey=False, 
-            despine=False,
-            gridspec_kws={"wspace":1},
-            height=5            
-        )
-        g.map(
-            sns.scatterplot, 
-            'r', 
-            'cpa_distance', 
-            marker=".", 
-            s=20, 
-            # hue=df['tss_1']
-        )
-    
+        self.df["r"] = np.deg2rad(df["bearing_12"])
+        try:
+            g = sns.FacetGrid(
+                self.df,
+                col="type_2",
+                row="type_1",
+                subplot_kws=dict(projection="polar"),
+                sharex=False,
+                sharey=False,
+                despine=False,
+                gridspec_kws={"wspace": 1.5},
+                # height=5
+            )
+        except Exception as err:
+            LOGGER.error(err)
+            
+        g.map(sns.scatterplot, "r", "cpa_distance", marker=".", s=30)
+       
+        # Limit to lower upper triangle of grid
+        g.axes[1, 2].set_visible(False)
+        g.axes[2, 1].set_visible(False)
+        g.axes[2, 2].set_visible(False)
+
+        # Set north to 0 degrees
         for axes in g.axes.flat:
             axes.set_theta_zero_location("N")
             axes.set_theta_direction(-1)
-            axes.legend(bbox_to_anchor=(1.05, 1), loc=2, borderaxespad=0.)
+            axes.title.set_position([0.5, 1.1])
+            axes.yaxis.labelpad = 25
+
+        save_plot(join(PLOTS_DIR, name), tight=False)
+        plt.close(fig)
+
+    @time_this
+    def plot_domain_encounter(self, tss=None):
+        """Plot CPA ship domain limited to 3nm"""
+        if tss is None:
+            df = self.table_dataframe(where_cond="cpa_distance < 5556")
+            name = "Ship_Domain_by_Encounter"
+
+        if tss:
+            df = self.table_dataframe(
+                where_cond="cpa_distance < 5556 and tss_1 = True and tss_2 = True"
+            )
+            name = "Ship_Domain_Inside_TSS_By_Encounter"
+
+        elif tss is False:
+            df = self.table_dataframe(
+                where_cond="cpa_distance < 3000 and tss_1 = False and tss_2 = False"
+            )
+            name = "Ship_Domain_Outside_TSS_By_Encounter"
+
+        df["r"] = np.deg2rad(df["bearing_12"])
+
+        fig = plt.figure(figsize=(20, 20))
+        g = sns.FacetGrid(
+            df, 
+            row="encounter",
+            subplot_kws=dict(projection="polar"),
+            sharex=False, 
+            sharey=False, 
+            despine=False,
+            gridspec_kws={"wspace": 1.5},
+            # height=5
+        )
+        g.map(
+            sns.scatterplot, "r", "cpa_distance", marker=".", s=30,
+        )
+    
+        g.axes[1, 2].set_visible(False)
+        g.axes[2, 1].set_visible(False)
+        g.axes[2, 2].set_visible(False)
+
+        for axes in g.axes.flat:
+            axes.set_theta_zero_location("N")
+            axes.set_theta_direction(-1)
+            # axes.legend(bbox_to_anchor=(1.05, 1), loc=2, borderaxespad=0.)
         
-        save_plot(join(PLOTS_DIR, "Ship_Domain"),tight=False)
+        save_plot(join(PLOTS_DIR, name), tight=False)
 
     @time_this
     def encounter_type(self):
         """Add type of interaction"""
-        conType = 'encounter'
-        self.add_column(conType, datatype='varchar')
+        conType = "encounter"
+        self.add_column(conType, datatype="varchar")
 
         sql = f"""
             WITH first AS (
@@ -905,13 +979,13 @@ class Encounters_Table(Postgres_Table):
             AND first.mmsi_2 = {self.table}.mmsi_2
             AND first.trip_2 = {self.table}.trip_2
         """
-        self.run_DDL(sql)
+        self.run_query(sql)
 
     @time_this
     def giveway_info(self):
         """Add GW, SO info"""
-        vessel = 'ship_1_give_way'
-        self.add_column(vessel, datatype='integer')
+        vessel = "ship_1_give_way"
+        self.add_column(vessel, datatype="integer")
 
         sql = f"""
             WITH first AS (
@@ -951,78 +1025,77 @@ class Encounters_Table(Postgres_Table):
             AND first.mmsi_2 = {self.table}.mmsi_2
             AND first.trip_2 = {self.table}.trip_2
         """
-        self.run_DDL(sql)
+        self.run_query(sql)
 
     @time_this
     def dcpa(self):
         """Add distance to CPA"""
-        name1 = 'dcpa_1'
-        name2 = 'dcpa_2'
+        name1 = "dcpa_1"
+        name2 = "dcpa_2"
 
-        self.add_column(name1, datatype='float(4)')
-        self.add_column(name2, datatype='float(4)')
+        self.add_column(name1, datatype="float(4)")
+        self.add_column(name2, datatype="float(4)")
 
         sql = """
             UPDATE {0}
             SET {1} = ST_Distance({2}, {3})
         """
-        self.cur.execute(sql.format(self.table, name1, 'point_1', 'cpa_point_1'))
-        self.cur.execute(sql.format(self.table, name2, 'point_2', 'cpa_point_2'))
+        self.cur.execute(sql.format(self.table, name1, "point_1", "cpa_point_1"))
+        self.cur.execute(sql.format(self.table, name2, "point_2", "cpa_point_2"))
         self.conn.commit()
 
     @time_this
     def tcpa(self):
         """Add time to CPA"""
-        name = 'tcpa'
-        self.add_column(name, datatype='float(4)')
+        name = "tcpa"
+        self.add_column(name, datatype="float(4)")
         sql = f"""
             UPDATE {self.table}
             SET {name} = EXTRACT(MINUTE FROM (datetime - cpa_time))
         """
-        self.run_DDL(sql)
+        self.run_query(sql)
 
+    @time_this
     def time_range(self):
-        '''Add time period of interaction.'''
-        print('Adding time period to {0}'.format(self.table))
-        period = 'period'
-        duration = 'duration'
+        """Add time period of interaction"""
+        LOGGER.info("Adding time period to {0}".format(self.table))
+        period = "period"
+        duration = "duration"
 
-        self.add_column(period, datatype='tsrange')
-        self.add_column(duration, datatype='time')
+        self.add_column(period, datatype="tsrange")
+        self.add_column(duration, datatype="time")
 
-        sql = """
-            UPDATE {table}
+        sql = f"""
+            UPDATE {self.table}
             SET
-                {period} = tsrange(period_start, period_end),
+                {period} = tstzrange(period_start, period_end),
                 {duration} = period_end - period_start
-        """.format(table=self.table, period=period, duration=duration)
-        self.cur.execute(sql)
-        self.conn.commit()
+        """
+        self.run_query(sql)
 
     def traffic(self):
-        '''Add the number of other vessel's the ship is interacting with.'''
-        name = 'traffic'
-        self.add_column(name, datatype='integer')
-        sql = """
+        """Add the number of other vessel's the ship is interacting with"""
+        name = "traffic"
+        self.add_column(name, datatype="integer")
+        sql = f"""
             WITH count AS (
                 SELECT
-                    mmsi1,
-                    track1,
+                    mmsi_1,
+                    trip_1,
                     period,
-                    COUNT (DISTINCT mmsi2) AS traffic
-                FROM {table}
-                GROUP BY mmsi1, track1, period
+                    COUNT (DISTINCT mmsi_2) AS traffic
+                FROM {self.table}
+                GROUP BY mmsi_1, track1, period
             )
 
-            UPDATE {table}
-            SET {col} = count.traffic
+            UPDATE {self.table}
+            SET {name} = count.traffic
             FROM count
-            WHERE {table}.mmsi1 = count.mmsi1
-            AND {table}.track1 = count.track1
-            AND {table}.period && count.period
-        """.format(table=self.table, col=name)
-        self.cur.execute(sql)
-        self.conn.commit()
+            WHERE {self.table}.mmsi_1 = count.mmsi_1
+            AND {self.table}.track1 = count.trip_1
+            AND {self.table}.period && count.period
+        """
+        self.run_query(sql)
 
     def plot_encounters(self):
 
