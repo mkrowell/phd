@@ -7,47 +7,33 @@ Project Organization
 ------------
 
     ├── LICENSE
-    ├── Makefile           <- Makefile with commands like `make data` or `make train`
-    ├── README.md          <- The top-level README for developers using this project.
+    ├── README.md           <- The top-level README for developers using this project
     ├── data
-    │   ├── external       <- Data from third party sources.
-    │   ├── interim        <- Intermediate data that has been transformed.
-    │   ├── processed      <- The final, canonical data sets for modeling.
-    │   └── raw            <- The original, immutable data dump.
+    │   ├── raw             <- The original, immutable data dump
+    │   ├── cleaned         <- Intermediate data that has been cleaned
+    │   └── processed       <- The final, canonical data sets for analysis
     │
-    ├── docs               <- A default Sphinx project; see sphinx-doc.org for details
+    ├── docs                <- A default Sphinx project; see sphinx-doc.org for details
     │
-    ├── models             <- Trained and serialized models, model predictions, or model summaries
+    ├── reports             <- Generated analysis as HTML, PDF, LaTeX, etc.
+    │   ├── figures         <- Generated graphics and figures to be used in reporting
+    │   └── logs            <- Generated logs
     │
-    ├── notebooks          <- Jupyter notebooks. Naming convention is a number (for ordering),
-    │                         the creator's initials, and a short `-` delimited description, e.g.
-    │                         `1.0-jqp-initial-data-exploration`.
-    │
-    ├── references         <- Data dictionaries, manuals, and all other explanatory materials.
-    │
-    ├── reports            <- Generated analysis as HTML, PDF, LaTeX, etc.
-    │   └── figures        <- Generated graphics and figures to be used in reporting
-    │
-    ├── requirements.txt   <- The requirements file for reproducing the analysis environment, e.g.
+    ├── requirements.txt    <- The requirements file for reproducing the analysis environment, e.g.
     │                         generated with `pip freeze > requirements.txt`
     │
-    ├── setup.py           <- makes project pip installable (pip install -e .) so src can be imported
-    ├── src                <- Source code for use in this project.
-    │   ├── __init__.py    <- Makes src a Python module
-    │   │
-    │   ├── data           <- Scripts to download or generate data
-    │   │   └── make_dataset.py
-    │   │
-    │   ├── features       <- Scripts to turn raw data into features for modeling
-    │   │   └── build_features.py
-    │   │
-    │   ├── models         <- Scripts to train models and then use trained models to make
-    │   │   │                 predictions
-    │   │   ├── predict_model.py
-    │   │   └── train_model.py
-    │   │
-    │   └── visualization  <- Scripts to create exploratory and results oriented visualizations
-    │       └── visualize.py
+    ├── setup.py            <- makes project pip installable (pip install -e .) so src can be imported
+    ├── src                 <- Source code for use in this project
+    │   ├── __init__.py     <- Contains common functions
+    │   ├── clean.py        <- Class to turn raw data files into processed data files
+    │   ├── download.py     <- Classes to download data files
+    │   ├── dataframe.py    <- Classes that perform dataframe operations to clean and process data
+    │   ├── database.py     <- Classes to construct PostgreSQL tables in a database
+    │
+    ├── scripts             <- scripts for use in this project
+    │   ├── download_data.py<- Script to download raw data
+    │   ├── clean_data.py   <- Script to clean and process data
+    │   ├── build_tables.py <- Script to construct database and tables
     │
     └── tox.ini            <- tox file with settings for running tox; see tox.testrun.org
 
