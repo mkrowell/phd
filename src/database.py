@@ -39,9 +39,9 @@ class Postgres_Connection(object):
     Open/close standard connection to the postgres database.
     """
 
-    def __init__(self):
         # Create connection object to Postgres
-        self.conn = psycopg2.connect(
+    LOGGER.info("Connecting to postgres...")
+    conn = psycopg2.connect(
             host='localhost',
             dbname='postgres',
             user='postgres',
@@ -49,21 +49,55 @@ class Postgres_Connection(object):
         )
 
         # Set standard properties and extensions
-        with self.conn.cursor() as cur:
+    with conn.cursor() as cur:
             cur.execute("SET timezone = 'UTC'")
             cur.execute("CREATE EXTENSION IF NOT EXISTS postgis")
-            self.conn.commit()
+        # cur.execute("CREATE EXTENSION IF NOT EXISTS timescaledb")
+        conn.commit()
 
         # Enable PostGIS extension
-        register(self.conn)
+    register(conn)
+
+    # Add functions to database
+    sql = """
+        CREATE OR REPLACE FUNCTION normalize_angle(
+            angle FLOAT,
+            range_start FLOAT,
+            range_end FLOAT)
+        RETURNS FLOAT AS $$
+        BEGIN
+            RETURN (angle - range_start) - FLOOR((angle - range_start)/(range_end - range_start))*(range_end - range_start) + range_start;
+        END; $$
+        LANGUAGE PLPGSQL;
+
+        CREATE OR REPLACE FUNCTION angle_difference(
+            angle1 FLOAT,
+            angle2 FLOAT)
+        RETURNS FLOAT AS $$
+        BEGIN
+            RETURN DEGREES(ATAN2(
+                SIN(RADIANS(angle1) - RADIANS(angle2)),
+                COS(RADIANS(angle1) - RADIANS(angle2))
+            ));
+        END; $$
+        LANGUAGE PLPGSQL
+    """
+    with conn.cursor() as cur:
+        try:
+            cur.execute(sql)
+            conn.commit()
+        except psycopg2.DatabaseError as err:
+            conn.rollback()
+            raise err    
 
     def close_connection(self):
         """
         Close the database connection, if open.
         """
-        if self.conn:
-            self.conn.close()
-            print('Database connection closed.')
+        if Postgres_Connection.conn:
+            Postgres_Connection.conn.close()
+            LOGGER.info('Database connection closed.')
+
 
 class Postgres_Table(Postgres_Connection):
 
