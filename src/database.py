@@ -464,6 +464,15 @@ class Tracks_Table(Postgres_Table):
         """
         self.run_DDL(sql)
 
+    def add_length(self):
+        """Add track length"""
+        self.add_column('length', 'float(4)', geometry=False)
+        sql = f"""
+            UPDATE {self.table}
+            SET length = ST_Length(track)
+        """
+        self.run_DDL(sql)
+
 
 class CPA_Table(Postgres_Table):
 
