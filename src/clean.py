@@ -1,12 +1,12 @@
 #!/usr/bin/env python
-'''
+"""
 .. module:: src.download
     :language: Python Version 3.7.4
     :platform: Windows 10
     :synopsis: download shoreline, TSS, and NAIS data
 
 .. moduleauthor:: Maura Rowell <mkrowell@uw.edu>
-'''
+"""
 
 
 # ------------------------------------------------------------------------------
@@ -31,29 +31,29 @@ from src import LOGGER
 # ------------------------------------------------------------------------------
 class NAIS_Cleaner(src.download.NAIS_Download):
 
-    '''
+    """
     Clean and preprocess raw NAIS data
-    '''
+    """
 
     def __init__(self, city, year):
         """Initialize parameters and setup directories"""
         super().__init__(city, year)
         self.city = city
         self.year = year
-        self._month = '01'
+        self._month = "01"
 
         # Data directories
-        self.cleaned = abspath(join('data','cleaned','ais'))
-        self.processed = abspath(join('data','processed','ais'))
+        self.cleaned = abspath(join("data", "cleaned", "ais"))
+        self.processed = abspath(join("data", "processed", "ais"))
         os.makedirs(self.cleaned, exist_ok=True)
-        os.makedirs(self.processed, exist_ok=True)      
+        os.makedirs(self.processed, exist_ok=True)
 
         # City associated parameters
-        self.minPoints = self.parameters['minPoints']
-        self.lonMin = self.parameters['lonMin']
-        self.lonMax = self.parameters['lonMax']
-        self.latMin = self.parameters['latMin']
-        self.latMax = self.parameters['latMax']
+        self.minPoints = self.parameters["minPoints"]
+        self.lonMin = self.parameters["lonMin"]
+        self.lonMax = self.parameters["lonMax"]
+        self.latMin = self.parameters["latMin"]
+        self.latMax = self.parameters["latMax"]
 
     @property
     def csv_cleaned(self):
@@ -76,12 +76,7 @@ class NAIS_Cleaner(src.download.NAIS_Download):
         - normalizes cog
         """
         return src.dataframe.Basic_Clean(
-            self.csv,
-            self.minPoints,
-            self.lonMin,
-            self.lonMax,
-            self.latMin,
-            self.latMax
+            self.csv, self.minPoints, self.lonMin, self.lonMax, self.latMin, self.latMax
         )
 
     @property
@@ -89,22 +84,20 @@ class NAIS_Cleaner(src.download.NAIS_Download):
         """
         Returns cleaned df sorted and projected to 32610
         """
-        return src.dataframe.Processor(
-            self.csv_cleaned, self.month, self.minPoints
-        )
+        return src.dataframe.Processor(self.csv_cleaned, self.month, self.minPoints)
 
     def clean_raw(self, overwrite=False):
         """Basic cleaning and reducing of data"""
-        LOGGER.info(f'Cleaning NAIS file for month {self.month}...')
+        LOGGER.info(f"Cleaning NAIS file for month {self.month}...")
         if not exists(self.csv_cleaned) or overwrite:
             self.df_raw.clean_raw()
         else:
-            LOGGER.info(f'NAIS file for month {self.month} has been cleaned.')        
+            LOGGER.info(f"NAIS file for month {self.month} has been cleaned.")
 
     def process(self, overwrite=False):
         """Basic cleaning and reducing of data"""
-        LOGGER.info(f'Processing NAIS file for month {self.month}...')
+        LOGGER.info(f"Processing NAIS file for month {self.month}...")
         if not exists(self.csv_processed) or overwrite:
             self.df_clean.preprocess()
         else:
-            LOGGER.info(f'NAIS file for month {self.month} has been preprocessed.')
+            LOGGER.info(f"NAIS file for month {self.month} has been preprocessed.")
