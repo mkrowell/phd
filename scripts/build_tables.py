@@ -26,7 +26,7 @@ import src
 city = 'seattle'
 srid = 32610
 year = '2017'
-months = [str(i).zfill(2) for i in range(1, 4)]
+months = ['07']
 
 # Load the parameters for the seattle region
 parameters_file = abspath(join(dirname(__file__) ,'..','src','settings.yaml'))
