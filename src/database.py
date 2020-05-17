@@ -764,69 +764,75 @@ class CPA_Table(Postgres_Table):
 
 class Encounters_Table(Postgres_Table):
 
-    def __init__(self, conn, table, input_points, input_cpa):
-        '''Connect to default database.'''
-        super(Encounters_Table, self).__init__(conn, table)
+    def __init__(self, table, input_points, input_cpa):
+        """Connect to default database"""
+        super(Encounters_Table, self).__init__(table)
         self.cur = self.conn.cursor()
         self.points = input_points
         self.cpa = input_cpa
 
+    @time_this
     def cpa_points(self):
+        """Make pairs of tracks that happen in same time interval"""
         LOGGER.info('Joining points with cpas to make encounter table...')
+        sql = f"""
+            CREATE TABLE {self.table} AS
             SELECT
-                c.mmsi1,
-                c.id1 AS track1,
-                c.mmsi2,
-                c.id2 AS track2,
-                c.rank,
-                p.basedatetime AS datetime,
-                c.cpa_time,
-                c.point_distance,
-                c.cpa_point1,
-                c.cpa_point2,
-                p.step_cog_degrees AS step_cog1,
-                p.cog_cosine AS cog_cos1,
-                p.step_acceleration AS accel1,
-                p.point_cog AS cog1,
-                p.heading AS heading1,
-                p.sog AS sog1,
-                p.vesseltype AS type1,
-                p.length AS length1,
-                p.in_tss AS point_tss1,
-                p.geom AS point1,
-                p2.step_cog_degrees AS step_cog2,
-                p2.cog_cosine AS cog_cos2,
-                p2.step_acceleration AS accel2,
-                p2.point_cog AS cog2,
-                p2.heading AS heading2,
-                p2.sog AS sog2,
-                p2.vesseltype AS type2,
-                p2.length AS length2,
-                p2.in_tss AS point_tss2,
-                p2.geom AS point2,
-                ST_Distance(p.geom, p2.geom) AS distance,
-                normalize_angle(angle_difference(DEGREES(ST_Azimuth(p.geom, p2.geom)), p.heading),0,360) AS bearing12,
+                c.mmsi_1,
+                c.trip_1,
+                c.type_1,
+                c.mmsi_2,
+                c.trip_2,
+                c.type_2,
+                p.datetime,
+                c.cpa_distance,
+                ST_Distance(p.geom, p2.geom) AS distance_12,
+                normalize_angle(angle_difference(DEGREES(ST_Azimuth(p.geom, p2.geom)), p.heading),0,360) AS bearing_12,
+                angle_difference(p.heading, p2.heading) AS heading_diff_12,
                 int4range(
-                    min(normalize_angle(angle_difference(DEGREES(ST_Azimuth(p.geom, p2.geom)), p.heading),0,360)) OVER (PARTITION BY c.mmsi1, c.track1, c.mmsi2, c.track2)::int,
-                    max(normalize_angle(angle_difference(DEGREES(ST_Azimuth(p.geom, p2.geom)), p.heading),0,360)) OVER (PARTITION BY c.mmsi1, c.track1, c.mmsi2, c.track2)::int) AS brange,
-                angle_difference(p.point_cog, p2.point_cog) AS cogdiff12,
-                AVG(p.cog_cosine) OVER (PARTITION BY c.mmsi1, c.id1, c.mmsi1, c.id2) AS sinuosity1,
-                AVG(p2.cog_cosine) OVER (PARTITION BY c.mmsi1, c.id1, c.mmsi1, c.id2) AS sinuosity2,
-                min(p2.basedatetime) OVER (PARTITION BY c.mmsi1, c.id1, c.mmsi2, c.id2) AS period_start,
-                max(p2.basedatetime) OVER (PARTITION BY c.mmsi1, c.id1, c.mmsi2, c.id2) AS period_end
-            FROM {cpa} c
-            LEFT JOIN {points} p
-                ON p.basedatetime between c.cpa_time - INTERVAL '10 minutes' AND c.cpa_time + INTERVAL '10 minutes'
-                AND p.mmsi = c.mmsi1
-            LEFT JOIN {points} p2
-                ON p2.mmsi = c.mmsi2
-                AND p2.basedatetime = p.basedatetime
-            WHERE point_distance <= 2*1852
-            AND p.geom IS NOT NULL
-            AND p2.geom IS NOT NULL
-        """.format(table=self.table, cpa=self.cpa, points=self.points)
-        self.cur.execute(sql)
-        self.conn.commit()
+                    min(normalize_angle(angle_difference(DEGREES(ST_Azimuth(p.geom, p2.geom)), p.heading),0,360)) OVER (PARTITION BY c.mmsi_1, c.trip_1, c.mmsi_2, c.trip_2)::int,
+                    max(normalize_angle(angle_difference(DEGREES(ST_Azimuth(p.geom, p2.geom)), p.heading),0,360)) OVER (PARTITION BY c.mmsi_1, c.trip_1, c.mmsi_2, c.trip_2)::int) AS brange,
+                max(abs(p.alteration_degrees))
+                    OVER (PARTITION BY c.mmsi_1, c.trip_1, c.mmsi_2, c.trip_2) AS alteration_max_1,
+                max(abs(p2.alteration_degrees)) 
+                    OVER (PARTITION BY c.mmsi_1, c.trip_1, c.mmsi_2, c.trip_2) AS alteration_max_2, 
+                AVG(p.alteration_cosine) 
+                    OVER (PARTITION BY c.mmsi_1, c.trip_1, c.mmsi_2, c.trip_2) AS sinuosity_1,
+                AVG(p2.alteration_cosine) 
+                    OVER (PARTITION BY c.mmsi_1, c.trip_1, c.mmsi_2, c.trip_2) AS sinuosity_2,  
+                c.cpa_point_1,
+                c.cpa_point_2,
+                c.cpa_time,  
+                p.geom as point_1,
+                p.sog as sog_1,
+                p.heading as heading_1,
+                p.cog as cog_1,
+                p.acceleration as acceleration_1,
+                p.alteration_degrees as alteration_degrees_1,
+                p.alteration_cosine as alteration_cosine_1,
+                p.in_tss as tss_1,
+                p2.geom as point_2,
+                p2.sog as sog_2,
+                p2.heading as heading_2,
+                p2.cog as cog_2,
+                p2.acceleration as acceleration_2,
+                p2.alteration_degrees as alteration_degrees_2,
+                p2.alteration_cosine as alteration_cosine_2,      
+                p2.in_tss as tss_2,
+                min(p2.datetime) 
+                    OVER (PARTITION BY c.mmsi_1, c.trip_1, c.mmsi_2, c.trip_2) AS period_start,
+                max(p2.datetime) 
+                    OVER (PARTITION BY c.mmsi_1, c.trip_1, c.mmsi_2, c.trip_2) AS period_end
+            FROM {self.cpa} c
+            LEFT JOIN {self.points} p
+                ON p.datetime between c.cpa_time - INTERVAL '10 minutes' AND c.cpa_time + INTERVAL '10 minutes'
+                AND p.mmsi = c.mmsi_1
+            INNER JOIN {self.points} p2
+                ON p2.mmsi = c.mmsi_2
+                AND p2.datetime = p.datetime
+        """
+        self.run_DDL(sql)
+    
 
     def encounter_type(self):
         '''Add type of interaction.'''
