@@ -276,7 +276,7 @@ class Postgres_Table(Postgres_Connection):
         LOGGER.info(f'Projecting {column} from {self.srid} to {new_srid}...')
         self.run_DDL(sql)
 
-    def add_index(self, name, field=None, gist=False):
+    def add_index(self, name, field=None, btree=False, gist=False):
         """
         Add index to table using the given field. If field
         is None, update the existing index.
@@ -284,8 +284,6 @@ class Postgres_Table(Postgres_Connection):
         Args:
             name (string): Name of the new index. Default None.
             field (string, optional): Column on which to build the index.
-            kind (boolean, optional): Whether the index is GiST. 
-                Defaults to False.
         """
         if field is None:
             sql = f"REINDEX {name}"
@@ -294,6 +292,8 @@ class Postgres_Table(Postgres_Connection):
             kind_str = ''
             if gist:
                 kind_str = 'USING GiST'                
+            if btree:
+                kind_str = 'USING btree'                
 
             sql = f"""
                     CREATE INDEX IF NOT EXISTS {name}
