@@ -833,6 +833,41 @@ class Encounters_Table(Postgres_Table):
         """
         self.run_DDL(sql)
     
+    @time_this
+    def plot_domain(self, tss=True):
+        """Plot CPA ship domain"""
+        if tss:
+            df = self.table_dataframe(where_cond="cpa_distance < 3000")
+        else:
+            df = self.table_dataframe(where_cond="cpa_distance < 3000 and tss_1 = False and tss_2 = False")
+        df["r"] = np.deg2rad(df['bearing_12'])
+
+        g = sns.FacetGrid(
+            df, 
+            col="type_1", 
+            row = "type_2", 
+            subplot_kws=dict(projection='polar'),
+            sharex=False, 
+            sharey=False, 
+            despine=False,
+            gridspec_kws={"wspace":1},
+            height=5            
+        )
+        g.map(
+            sns.scatterplot, 
+            'r', 
+            'cpa_distance', 
+            marker=".", 
+            s=20, 
+            # hue=df['tss_1']
+        )
+    
+        for axes in g.axes.flat:
+            axes.set_theta_zero_location("N")
+            axes.set_theta_direction(-1)
+            axes.legend(bbox_to_anchor=(1.05, 1), loc=2, borderaxespad=0.)
+        
+        save_plot(join(PLOTS_DIR, "Ship_Domain"),tight=False)
 
     def encounter_type(self):
         '''Add type of interaction.'''
