@@ -25,7 +25,7 @@ from shapely.geometry import Point
 import yaml
 
 import src
-from src import print_reduction, print_reduction_gdf, time_all
+from src import print_reduction, print_reduction_gdf, time_all, LOGGER
 
 
 # ------------------------------------------------------------------------------
@@ -63,12 +63,13 @@ def angle_difference(angle1, angle2):
 # ------------------------------------------------------------------------------
 # PLOT FUNCTIONS
 # ------------------------------------------------------------------------------
-def save_plot(ax, filepath):
+def save_plot(filepath, tight=True):
     """Save and close figure"""
     if exists(filepath):
             os.remove(filepath)
-    plt.tight_layout() 
-    plt.subplots_adjust(top=0.9, bottom=0.2)
+    if tight:
+        plt.tight_layout() 
+        plt.subplots_adjust(top=0.9, bottom=0.2)
     plt.savefig(filepath)
 
 def plot_type(df, prepend):
@@ -78,7 +79,7 @@ def plot_type(df, prepend):
     unique = df[['MMSI', 'VesselType']].drop_duplicates(keep='first')
     sns.countplot('VesselType', data=unique, palette="Paired")
     ax.set_ylabel('Number of Unique MMSI')
-    save_plot(ax, join(PLOTS_DIR, filename))
+    save_plot(join(PLOTS_DIR, filename))
     plt.close(fig)
 
 def plot_sog(df, prepend):
@@ -93,7 +94,7 @@ def plot_sog(df, prepend):
     else:
         plt.xlim(0, 50)
     filepath = join(PLOTS_DIR, filename)
-    save_plot(ax, filepath)
+    save_plot(filepath)
     plt.close(fig)
 
 def plot_acceleration(df):
@@ -105,7 +106,7 @@ def plot_acceleration(df):
     ax.set_ylabel('Number of Data Points')
     ax.set_xlabel('Acceleration (nautical miles/seconds^2)')
     plt.xlim(-300, 300)
-    save_plot(ax, filepath)
+    save_plot(filepath)
     plt.close(fig)
 
 def plot_alteration(df):
@@ -117,7 +118,7 @@ def plot_alteration(df):
     ax.set_ylabel('Number of Data Points')
     ax.set_xlabel('Alteration (Degrees)')
     plt.xlim(-180, 180)
-    save_plot(ax, filepath)
+    save_plot(filepath)
     plt.close(fig)
 
 def plot_trip_length(df):
@@ -135,23 +136,29 @@ def plot_trip_length(df):
     ax.set_ylabel('Number of Trips')
     ax.set_xlabel('Trip Length (m)')
     plt.legend()
-    save_plot(ax, filepath)
+    save_plot(filepath)
     plt.close(fig)
 
-def plot_step_length(df):
+def plot_step_length(df, prepend):
     """Create a chart of step length observed"""
-    filename = f'Step_Length.png'
+    filename = f'{prepend}_Step_Length.png'
     filepath = join(PLOTS_DIR, filename)
     fig, ax = plt.subplots()
-    sns.distplot(df['Step_Distance']).set_title("Step Length")
+    sns.distplot(60*df['Step_Distance']/df['Interval'], kde=True).set_title("Step Length")
     ax.set_ylabel('Number of Steps')
     ax.set_xlabel('Length (m)')
-    save_plot(ax, filepath)
+    save_plot(filepath)
     plt.close(fig)
 
 def plot_latlon(df):
     """create a distribution of lat/lon"""
-    sns.jointplot(x="LON", y="LAT", data=df, kind="kde")
+    filename = f'Spatial_Distribution.png'
+    filepath = join(PLOTS_DIR, filename)
+    fig, ax = plt.subplots()
+    sns.jointplot(x="LON", y="LAT", data=df, kind="kde").set_title('Spatial Distribution')
+    save_plot(filepath)
+    plt.close(fig)
+    
 
 def plot_cog(df, prepend):
     """Create a chart of COGs observed by type"""
@@ -170,7 +177,7 @@ def plot_cog(df, prepend):
 
     ax.legend(loc='upper center', bbox_to_anchor=(0, 1.05),
             ncol=1, fancybox=True)
-    save_plot(ax, join(PLOTS_DIR, filename))
+    save_plot(join(PLOTS_DIR, filename))
     plt.close(fig)
 
 def plot_time(df, prepend):
@@ -181,7 +188,7 @@ def plot_time(df, prepend):
     sns.distplot(df['BaseDateTime'], kde=False)
     ax.set_ylabel('Number of Data Points')
     ax.set_xlabel('Time of Day (UTC)')
-    save_plot(ax, filepath)
+    save_plot(filepath)
     plt.close(fig)
 
 
@@ -460,8 +467,8 @@ class Processor(object):
         plot_acceleration(self.gdf)
         plot_alteration(self.gdf)
         plot_trip_length(self.gdf)
-        plot_latlon(self.gdf)
-        plot_step_length(self.gdf)
+        # plot_latlon(self.gdf)
+        plot_step_length(self.gdf, "Processed")
 
                 
     # PREPROCESSING ------------------------------------------------------------
@@ -500,13 +507,15 @@ class Processor(object):
             )
             return df.set_index('index')
         self.gdf = self.grouped_trip.apply(distance)
-        self.gdf['Step_Distance'].fillna(0)
+        self.gdf['Step_Distance'].replace("", np.nan, inplace=True)
+        self.gdf['Step_Distance'].fillna(0, inplace=True)
         self.gdf['Step_Distance']/METERS_IN_NM
 
     @print_reduction_gdf
     def _mark_distance(self, limit):
         """Compare step_distance to speed*time. Remove suspicious data."""
         self._step_distance()
+        plot_step_length(self.gdf, "Cleaned")
         self.gdf['Expected_Distance'] = (
             (self.gdf['SOG']*self.gdf['Interval']*METERS_IN_NM)/3600
         )
