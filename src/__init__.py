@@ -30,17 +30,33 @@ import certifi
 import ctypes
 import datetime
 from dateutil.parser import parse
+import logging
 import os
 from os.path import abspath, basename, dirname, exists, join, splitext
 import pycurl
 import re
+import sys
 import time
 import zipfile
 
 
-# -----------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
+# LOGGING
+# ------------------------------------------------------------------------------
+LOGGER = logging.getLogger(__name__)
+out_hdlr = logging.StreamHandler(sys.stdout)
+out_hdlr.setFormatter(logging.Formatter(
+    '%(asctime)s |  %(module)s | %(funcName)s | %(message)s',
+    "%Y-%m-%d %H:%M:%S")
+)
+out_hdlr.setLevel(logging.INFO)
+LOGGER.addHandler(out_hdlr)
+LOGGER.setLevel(logging.INFO)
+
+
+# ------------------------------------------------------------------------------
 # PARAMETERS
-# -----------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 # passenger = {i:'passenger' for i in list(range(60,70)) + [1013, 1014]}
 # cargo = {i:'cargo' for i in list(range(70,80)) + [1003, 1004, 1016]}
 # tanker = {i:'tanker' for i in list(range(80,90)) + [1017, 1024]}
@@ -243,7 +259,7 @@ def concat_df(func, iterateList, *args, **kwargs):
     '''
     dfs = list()
     for item in iterateList:
-        print('Concatenating {0}...'.format(item))
+        LOGGER.info('Concatenating {0}...'.format(item))
         df = func(item, *args, **kwargs)
         dfs.append(df)
     return pd.concat(dfs, sort = False)
@@ -267,7 +283,7 @@ def print_reduction(original_function):
             f"Month {self.month}, Method {original_function.__name__}: "
             f"Removed Rows = {-rows}, Percent Reduction = {percent}"
         )
-        print(msg)
+        LOGGER.info(msg)
         with open('reports\\logs\\basic_clean.txt', 'a') as f:
             f.write(msg + "\n")
         return x
@@ -285,7 +301,7 @@ def print_reduction_gdf(original_function):
             f"Month {self.month}, Method {original_function.__name__}: "
             f"Removed Rows = {-rows}, Percent Reduction = {percent}"
         )
-        print(msg)
+        LOGGER.info(msg)
         with open('reports\\logs\\preprocess.txt', 'a') as f:
             f.write(msg + "\n")
         return x
@@ -297,7 +313,7 @@ def time_this(original_function):
         before = datetime.datetime.now()
         x = original_function(*args,**kwargs)
         after = datetime.datetime.now()
-        print("Method {0}: Elapsed Time = {1}".format(
+        LOGGER.info("Method {0}: Elapsed Time = {1}".format(
             original_function.__name__,
             after-before)
         )
