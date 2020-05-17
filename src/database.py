@@ -127,7 +127,6 @@ class Postgres_Table(Postgres_Connection):
                 self.conn.rollback()
                 raise err
                 
-        
     def create_table(self, filepath=None, columns=None):
         """
         Create table in the database.
@@ -344,13 +343,14 @@ class Postgres_Table(Postgres_Connection):
         self.run_DDL(sql)
 
     def table_dataframe(self, table=None, select_col=None, where_cond=None):
+        """Return Pandas dataframe of table"""
         if table is None:
             table = self.table
         if select_col is None:
             select_col = '*'
         sql = f"""SELECT {select_col} FROM {table}"""
 
-        if where_cond is not None:
+        if where_cond:
             sql = sql + f""" WHERE {where_cond} """
 
         self.cur.execute(sql)
@@ -490,15 +490,14 @@ class CPA_Table(Postgres_Table):
             input_table (string): Name of tracks table
             shore_table (string): Name of shore table
         """
-
         super(CPA_Table, self).__init__(table)
         self.cur = self.conn.cursor()
         self.input = input_table
         self.shore = shore_table
 
+    @time_this
     def tracks_tracks(self):
         """Make pairs of tracks that happen in same time interval."""
-        print('Joining tracks with itself to make interaction table...')
         sql = f"""
             CREATE TABLE {self.table} AS
             SELECT
@@ -519,49 +518,49 @@ class CPA_Table(Postgres_Table):
         LOGGER.info(f'Joining {self.input} with itself to make {self.table}...')
         self.run_DDL(sql)
 
+    @time_this
     def cpa_time(self):
-        """Add track time"""
-        self.add_column('cpa_time', 'TIMESTAMP', geometry=False)
+        """Add time when CPA occurs"""
+        col = 'cpa_time'
+        self.add_column(col, 'TIMESTAMP')
         sql = f"""
             UPDATE {self.table}
-            SET cpa_time = to_timestamp(cpa_epoch)
+            SET {col} = to_timestamp(cpa_epoch)::timestamptz
         """
         LOGGER.info(f'Updating column {col}...')
         self.run_DDL(sql)
 
+    @time_this
     def cpa_points(self):
-        """Add track points"""
-        self.add_column('cpa_point_1', 'POINTM', geometry=True)
-        self.add_column('cpa_point_2', 'POINTM', geometry=True)
+        """Add track points where CPA occurs"""
+        for i in [1, 2]:
+            col = f"cpa_point_{i}"
+            self.add_column(col, 'POINTM', geometry=True)
         sql = f"""
             UPDATE {self.table}
-            SET
-                cpa_point_1 = ST_Force3DM(
+                SET {col} = ST_Force3DM(
                     ST_GeometryN(
-                        ST_LocateAlong(track_1, cpa_epoch),
+                        ST_LocateAlong(track_{i}, cpa_epoch),
                         1
                     )
-                ),
-                cpa_point_2 = ST_Force3DM(
-                    ST_GeometryN(
-                        ST_LocateAlong(track_2, cpa_epoch),
-                        1
                     )
-                )
         """
             LOGGER.info(f'Updating column {col}...')
         self.run_DDL(sql)
     
+    @time_this
     def cpa_line(self):
         """Add line between CPA points"""
-        self.add_column('cpa_line', 'LINESTRINGM', geometry=True)
+        col = 'cpa_line'
+        self.add_column(col, 'LINESTRINGM', geometry=True)
         sql = f"""
             UPDATE {self.table}
-            SET cpa_line = ST_MakeLine(cpa_point_1, cpa_point_2)
+            SET {col} = ST_MakeLine(cpa_point_1, cpa_point_2)
         """
-        self.cur.execute(sql)
-        self.conn.commit()
+        LOGGER.info(f'Updating column {col}...')
+        self.run_DDL(sql)
 
+    @time_this
     def delete_shore_cross(self):
         """Delete CPAs that line on shore."""
         LOGGER.info('Deleting shore intersects from {0}...'.format(self.table))
@@ -869,98 +868,96 @@ class Encounters_Table(Postgres_Table):
         
         save_plot(join(PLOTS_DIR, "Ship_Domain"),tight=False)
 
+    @time_this
     def encounter_type(self):
-        '''Add type of interaction.'''
+        """Add type of interaction"""
         conType = 'encounter'
         self.add_column(conType, datatype='varchar')
 
-        sql = """
+        sql = f"""
             WITH first AS (
                 SELECT *
-                FROM {table}
-                WHERE (mmsi1, track1, mmsi2, track2) IN (
-                    SELECT mmsi1, track1, mmsi2, track2
+                FROM {self.table}
+                WHERE (mmsi_1, trip_1, mmsi_2, trip_2) IN (
+                    SELECT mmsi_1, trip_1, mmsi_2, trip_2
                     FROM (
                         SELECT
-                            mmsi1,
-                            track1,
-                            mmsi2,
-                            track2,
-                            ROW_NUMBER() OVER(PARTITION BY mmsi1, track1, mmsi2, track2 ORDER BY datetime ASC) as rk
-                        FROM {table}
+                            mmsi_1,
+                            trip_1,
+                            mmsi_2,
+                            trip_2,
+                            ROW_NUMBER() OVER(PARTITION BY mmsi_1, trip_1, mmsi_2, trip_2 ORDER BY datetime ASC) as rk
+                        FROM {self.table}
                     ) AS subquery
                 WHERE rk = 1
                 )
             )
 
-            UPDATE {table}
-            SET {type} = CASE
-                WHEN @first.cogdiff12 BETWEEN 165 AND 195 THEN 'head-on'
-                WHEN @first.cogdiff12 < 15 OR @first.cogdiff12 > 345 THEN 'overtaking'
+            UPDATE {self.table}
+            SET {conType} = CASE
+                WHEN @first.heading_diff_12 BETWEEN 165 AND 195 THEN 'head-on'
+                WHEN @first.heading_diff_12 < 15 OR @first.heading_diff_12 > 345 THEN 'overtaking'
                 ELSE 'crossing'
                 END
             FROM first
-            WHERE first.mmsi1 = {table}.mmsi1
-            AND first.track1 = {table}.track1
-            AND first.mmsi2 = {table}.mmsi2
-            AND first.track2 = {table}.track2
-        """.format(table=self.table, type=conType)
-        self.cur.execute(sql)
-        self.conn.commit()
+            WHERE first.mmsi_1 = {self.table}.mmsi_1
+            AND first.trip_1 = {self.table}.trip_1
+            AND first.mmsi_2 = {self.table}.mmsi_2
+            AND first.trip_2 = {self.table}.trip_2
+        """
+        self.run_DDL(sql)
 
-
-
+    @time_this
     def giveway_info(self):
-        '''Add type of interaction.'''
-        print('Adding gvieway info to {0}'.format(self.table))
-        vessel = 'give_way'
+        """Add GW, SO info"""
+        vessel = 'ship_1_give_way'
         self.add_column(vessel, datatype='integer')
 
-        sql = """
+        sql = f"""
             WITH first AS (
                 SELECT *
-                FROM {table}
-                WHERE (mmsi1, track1, mmsi2, track2) IN (
-                    SELECT mmsi1, track1, mmsi2, track2
+                FROM {self.table}
+                WHERE (mmsi_1, trip_1, mmsi_2, trip_2) IN (
+                    SELECT mmsi_1, trip_1, mmsi_2, trip_2
                     FROM (
                         SELECT
-                            mmsi1,
-                            track1,
-                            mmsi2,
-                            track2,
-                            ROW_NUMBER() OVER(PARTITION BY mmsi1, track1, mmsi2, track2 ORDER BY datetime ASC) as rk
-                        FROM {table}
+                            mmsi_1,
+                            trip_1,
+                            mmsi_2,
+                            trip_2,
+                            ROW_NUMBER() OVER(PARTITION BY mmsi_1, trip_1, mmsi_2, trip_2 ORDER BY datetime ASC) as rk
+                        FROM {self.table}
                     ) AS subquery
                 WHERE rk = 1
                 )
             )
 
-            UPDATE {table}
+            UPDATE {self.table}
             SET
-                {give} = CASE
-                    WHEN {table}.encounter = 'overtaking' THEN CASE
-                        WHEN first.bearing12 BETWEEN 90 AND 270 THEN 0
+                {vessel} = CASE
+                    WHEN {self.table}.encounter = 'overtaking' THEN CASE
+                        WHEN first.bearing_12 BETWEEN 90 AND 270 THEN 0
                         ELSE 1
                         END
-                    WHEN {table}.encounter = 'crossing' THEN CASE
-                        WHEN first.bearing12 BETWEEN 0 AND 112.5 THEN 1
+                    WHEN {self.table}.encounter = 'crossing' THEN CASE
+                        WHEN first.bearing_12 BETWEEN 0 AND 112.5 THEN 1
                         ELSE 0
                         END
-                    WHEN {table}.encounter = 'head-on' THEN 1
+                    WHEN {self.table}.encounter = 'head-on' THEN 1
                     END
             FROM first
-            WHERE first.mmsi1 = {table}.mmsi1
-            AND first.track1 = {table}.track1
-            AND first.mmsi2 = {table}.mmsi2
-            AND first.track2 = {table}.track2
-        """.format(table=self.table, give=vessel)
-        self.cur.execute(sql)
-        self.conn.commit()
+            WHERE first.mmsi_1 = {self.table}.mmsi_1
+            AND first.trip_1 = {self.table}.trip_1
+            AND first.mmsi_2 = {self.table}.mmsi_2
+            AND first.trip_2 = {self.table}.trip_2
+        """
+        self.run_DDL(sql)
 
+    @time_this
     def dcpa(self):
-        '''Add distance to CPA.'''
-        name1 = 'dcpa1'
-        name2 = 'dcpa2'
+        """Add distance to CPA"""
+        name1 = 'dcpa_1'
+        name2 = 'dcpa_2'
 
         self.add_column(name1, datatype='float(4)')
         self.add_column(name2, datatype='float(4)')
@@ -969,20 +966,20 @@ class Encounters_Table(Postgres_Table):
             UPDATE {0}
             SET {1} = ST_Distance({2}, {3})
         """
-        self.cur.execute(sql.format(self.table, name1, 'point1', 'cpa_point1'))
-        self.cur.execute(sql.format(self.table, name2, 'point2', 'cpa_point2'))
+        self.cur.execute(sql.format(self.table, name1, 'point_1', 'cpa_point_1'))
+        self.cur.execute(sql.format(self.table, name2, 'point_2', 'cpa_point_2'))
         self.conn.commit()
 
+    @time_this
     def tcpa(self):
-        '''Add time to CPA.'''
+        """Add time to CPA"""
         name = 'tcpa'
         self.add_column(name, datatype='float(4)')
-        sql = """
-            UPDATE {0}
-            SET {1} = EXTRACT(MINUTE FROM (datetime::timestamp - cpa_time::timestamp))
-        """.format(self.table, name)
-        self.cur.execute(sql)
-        self.conn.commit()
+        sql = f"""
+            UPDATE {self.table}
+            SET {name} = EXTRACT(MINUTE FROM (datetime - cpa_time))
+        """
+        self.run_DDL(sql)
 
     def time_range(self):
         '''Add time period of interaction.'''
