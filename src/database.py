@@ -109,12 +109,12 @@ class Postgres_Table(Postgres_Connection):
                 of the table. Defaults to None.
         """
         if filepath:
-            print(f'Constructing {self.table} from {filepath}...')
             cmd = f'"C:\\Program Files\\PostgreSQL\\12\\bin\\shp2pgsql.exe" -s 4326 -d {filepath} {self.table} | psql -d postgres -U postgres -q'
+            LOGGER.info(f'Constructing {self.table} from {filepath}...')
             subprocess.call(cmd, shell=True)
         elif columns:
-            print(f'Constructing {self.table} from columns...')
             sql = f'CREATE TABLE IF NOT EXISTS {self.table} ({columns})'
+            LOGGER.info(f'Constructing {self.table} from columns...')
             self.run_DDL(sql)
         else:
             raise UserWarning('You must provide a filepath or column defintions.')
@@ -132,7 +132,7 @@ class Postgres_Table(Postgres_Connection):
         if table is None:
             table = self.table
         sql = f'DROP TABLE IF EXISTS {table}'
-        print(f'Dropping table {table}...')
+        LOGGER.info(f'Dropping table {table}...')
         self.run_DDL(sql)
 
     def copy_data(self, csv_file):
@@ -144,7 +144,7 @@ class Postgres_Table(Postgres_Connection):
                 that is to be copied into the table.
         """
         with open(csv_file, 'r') as csv:
-            print(f'Copying {csv_file} to {self.table}...')
+            LOGGER.info(f'Copying {csv_file} to {self.table}...')
             with self.conn.cursor() as cur:
                 try:
                     cur.copy_from(csv, self.table, sep=',')
@@ -183,7 +183,7 @@ class Postgres_Table(Postgres_Connection):
             {default_str}
         """
 
-        print(f'Adding {name} ({datatype}) to {self.table}...')
+        LOGGER.info(f'Adding {name} ({datatype}) to {self.table}...')
         self.run_DDL(sql)
 
     def drop_column(self, column):
@@ -194,7 +194,7 @@ class Postgres_Table(Postgres_Connection):
             column (string): Name of the column to be dropped.
         """
         sql = f'ALTER TABLE {self.table} DROP COLUMN IF EXISTS {column}'
-        print(f'Dropping column {column}...')
+        LOGGER.info(f'Dropping column {column}...')
         self.run_DDL(sql)
 
     def add_point(self, name, lon, lat, time=None):
@@ -239,7 +239,7 @@ class Postgres_Table(Postgres_Connection):
             TYPE Geometry({datatype}, {new_srid})
             USING ST_Transform({column}, {new_srid})
         """
-        print(f'Projecting {column} from {self.srid} to {new_srid}...')
+        LOGGER.info(f'Projecting {column} from {self.srid} to {new_srid}...')
         self.run_DDL(sql)
 
     def add_index(self, name, field=None, gist=False):
@@ -255,7 +255,7 @@ class Postgres_Table(Postgres_Connection):
         """
         if field is None:
             sql = f"REINDEX {name}"
-            print(f'Updating index on {field}...')
+            LOGGER.info(f'Updating index on {field}...')
         else:
             kind_str = ''
             if gist:
@@ -265,7 +265,7 @@ class Postgres_Table(Postgres_Connection):
                     CREATE INDEX IF NOT EXISTS {name}
                     ON {self.table} {kind_str} ({field})
                 """
-            print(f'Adding index on {field}...')
+            LOGGER.info(f'Adding index on {field}...')
         self.run_DDL(sql)
 
     def reduce_table(self, column, relationship, value):
@@ -277,7 +277,7 @@ class Postgres_Table(Postgres_Connection):
             relationship (string): =, <, > !=, etc.
             value (string, number): value to use in condition.
         """
-        print(f'Dropping {column} {relationship} {value} from {self.table}...')
+        LOGGER.info(f'Dropping {column} {relationship} {value} from {self.table}...')
         if isinstance(value, str):
             sql_delete = "DELETE FROM {0} WHERE {1} {2} '{3}'"
         else:
@@ -289,7 +289,7 @@ class Postgres_Table(Postgres_Connection):
         """
         Remove rows in the table that have a Null in the col
         """
-        print(f'Deleting null rows from {self.table}...')
+        LOGGER.info(f'Deleting null rows from {self.table}...')
         sql = f"""DELETE FROM {self.table} WHERE {col} IS NULL"""
         self.run_DDL(sql)
 
@@ -413,7 +413,7 @@ class Tracks_Table(Postgres_Table):
 
     def convert_to_tracks(self, points):
         """Add LINESTRING for each MMSI, TrackID."""
-        print('Creating tracks from points...')
+        LOGGER.info('Creating tracks from points...')
         sql = f"""
             CREATE TABLE {self.table} AS
             SELECT
@@ -472,6 +472,7 @@ class CPA_Table(Postgres_Table):
             ON t1.period && t2.period
             AND t1.mmsi != t2.mmsi
         """
+        LOGGER.info(f'Joining {self.input} with itself to make {self.table}...')
         self.run_DDL(sql)
 
     def cpa_time(self):
@@ -481,6 +482,7 @@ class CPA_Table(Postgres_Table):
             UPDATE {self.table}
             SET cpa_time = to_timestamp(cpa_epoch)
         """
+        LOGGER.info(f'Updating column {col}...')
         self.run_DDL(sql)
 
     def cpa_points(self):
@@ -503,6 +505,7 @@ class CPA_Table(Postgres_Table):
                     )
                 )
         """
+            LOGGER.info(f'Updating column {col}...')
         self.run_DDL(sql)
     
     def cpa_line(self):
@@ -517,7 +520,7 @@ class CPA_Table(Postgres_Table):
 
     def delete_shore_cross(self):
         """Delete CPAs that line on shore."""
-        print('Deleting shore intersects from {0}...'.format(self.table))
+        LOGGER.info('Deleting shore intersects from {0}...'.format(self.table))
         sql = f"""
             DELETE FROM {self.table} c
             USING {self.shore} s
@@ -725,10 +728,7 @@ class Encounters_Table(Postgres_Table):
         self.cpa = input_cpa
 
     def cpa_points(self):
-        '''Make pairs of tracks that happen in same time interval.'''
-        print('Joining points with cpas to make encounter table...')
-        sql = """
-            CREATE TABLE {table} AS
+        LOGGER.info('Joining points with cpas to make encounter table...')
             SELECT
                 c.mmsi1,
                 c.id1 AS track1,

@@ -23,6 +23,7 @@ import zipfile
 import yaml
 
 import src
+from src import LOGGER
 
 
 # ------------------------------------------------------------------------------
@@ -94,16 +95,16 @@ class NAIS_Cleaner(src.download.NAIS_Download):
 
     def clean_raw(self, overwrite=False):
         """Basic cleaning and reducing of data"""
-        print(f'Cleaning NAIS file for month {self.month}...')
+        LOGGER.info(f'Cleaning NAIS file for month {self.month}...')
         if not exists(self.csv_cleaned) or overwrite:
             self.df_raw.clean_raw()
         else:
-            print(f'NAIS file for month {self.month} has been cleaned.')        
+            LOGGER.info(f'NAIS file for month {self.month} has been cleaned.')        
 
     def process(self, overwrite=False):
         """Basic cleaning and reducing of data"""
-        print(f'Processing NAIS file for month {self.month}...')
+        LOGGER.info(f'Processing NAIS file for month {self.month}...')
         if not exists(self.csv_processed) or overwrite:
             self.df_clean.preprocess()
         else:
-            print(f'NAIS file for month {self.month} has been preprocessed.')
+            LOGGER.info(f'NAIS file for month {self.month} has been preprocessed.')
