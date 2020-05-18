@@ -16,21 +16,21 @@ from os.path import abspath, dirname, join
 import sys
 import yaml
 
-sys.path.append(abspath('.'))
+sys.path.append(abspath("."))
 import src
 
 
 # ------------------------------------------------------------------------------
 # PARAMETERS
 # ------------------------------------------------------------------------------
-city = 'seattle'
+city = "seattle"
 srid = 32610
-year = '2017'
-months = ['07']
+year = "2017"
+months = ["07"]
 
 # Load the parameters for the seattle region
-parameters_file = abspath(join(dirname(__file__) ,'..','src','settings.yaml'))
-with open(parameters_file, 'r') as stream:
+parameters_file = abspath(join(dirname(__file__), "..", "src", "settings.yaml"))
+with open(parameters_file, "r") as stream:
     parameters = yaml.safe_load(stream)[city]
 
 

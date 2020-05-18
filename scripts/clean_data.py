@@ -1,12 +1,12 @@
 #!/usr/bin/env python
-'''
+"""
 .. script::
     :language: Python Version 3.7.3
     :platform: Windows 10
     :synopsis: download shoreline, TSS, and NAIS data
 
 .. moduleauthor:: Maura Rowell <mkrowell@uw.edu>
-'''
+"""
 
 
 # ------------------------------------------------------------------------------
@@ -15,16 +15,16 @@
 import os
 import sys
 
-sys.path.append(os.path.abspath('.'))
+sys.path.append(os.path.abspath("."))
 import src
 
 
 # ------------------------------------------------------------------------------
 # PARAMETERS
 # ------------------------------------------------------------------------------
-city = 'seattle'
-year = '2017' 
-months = ['07']
+city = "seattle"
+year = "2017"
+months = ["07"]
 
 # ------------------------------------------------------------------------------
 # CLEAN DATA
