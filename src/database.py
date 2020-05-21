@@ -113,8 +113,9 @@ class Postgres_Table(Postgres_Connection):
         Initialize connection and set srid"""
         super(Postgres_Table, self).__init__()
         self.table = table
-        self.srid = 32610
+        self.srid = 4326
 
+    @time_this
     def run_query(self, query):
         """
         Execute a DDL SQL statement and commit it to the database.
@@ -381,6 +382,7 @@ class Points_Table(Postgres_Table):
             table (string): Name of table.
         """
         super(Points_Table, self).__init__(table)
+        self.epsg = 32610
         self.columns = """
             MMSI integer NOT NULL,
             Trip integer NOT NULL,
@@ -410,7 +412,8 @@ class Points_Table(Postgres_Table):
         PostGIS PointM geometry to the database.
         """
         self.add_column("geom", datatype="POINTM", geometry=True)
-        self.add_point("geom", "lon_utm", "lat_utm", "date_part('epoch', datetime)")
+        self.add_point("geom", "lon", "lat", "date_part('epoch', datetime)")
+        self.project_column("geom", "POINTM", self.epsg)
 
     def add_tss(self, tss):
         """
