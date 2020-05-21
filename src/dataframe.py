@@ -12,34 +12,35 @@
 # ------------------------------------------------------------------------------
 # IMPORTS
 # ------------------------------------------------------------------------------
+from contextlib import contextmanager
+from os.path import abspath, dirname, exists, join
+from shapely.geometry import Point
 import angles
 import datetime
 import geopandas as gpd
 import matplotlib.pyplot as plt
 import numpy as np
 import os
-from os.path import abspath, dirname, exists, join
 import pandas as pd
 import seaborn as sns
-from shapely.geometry import Point
 import yaml
 
-import src
+# import src
 from src import print_reduction, print_reduction_gdf, time_all, LOGGER
 
-
-# ------------------------------------------------------------------------------
-# CONSTANTS
-# ------------------------------------------------------------------------------
-METERS_IN_NM = 1852
-EARTH_RADIUS_KM = 6371
-PLOTS_DIR = abspath(join(dirname(__file__), "..", "reports", "figures"))
 
 # ------------------------------------------------------------------------------
 # SETTINGS
 # ------------------------------------------------------------------------------
 plt.style.use("seaborn")
 sns.set(color_codes=True)
+
+
+# ------------------------------------------------------------------------------
+# CONSTANTS
+# ------------------------------------------------------------------------------
+METERS_IN_NM = 1852
+PLOTS_DIR = abspath(join(dirname(__file__), "..", "reports", "figures"))
 
 
 # ------------------------------------------------------------------------------
@@ -50,7 +51,6 @@ def azimuth_utm(point1, point2):
     east = point2.x - point1.x
     north = point2.y - point1.y
     return np.degrees(np.arctan2(east, north))
-
 
 def angle_difference(angle1, angle2):
     """Return the signed difference between two angles in radians"""
@@ -64,8 +64,16 @@ def angle_difference(angle1, angle2):
 # ------------------------------------------------------------------------------
 # PLOT FUNCTIONS
 # ------------------------------------------------------------------------------
-def save_plot(filepath, tight=True):
+@contextmanager
+def plot(filename, tight=True):
+    fig, ax = plt.subplots()
+    yield ax
+    save_plot(filename, tight)
+    plt.close(fig)
+
+def save_plot(filename, tight):
     """Save and close figure"""
+    filepath = join(PLOTS_DIR, filename)
     if exists(filepath):
         os.remove(filepath)
     if tight:
@@ -73,22 +81,16 @@ def save_plot(filepath, tight=True):
         plt.subplots_adjust(top=0.9, bottom=0.2)
     plt.savefig(filepath)
 
-
 def plot_type(df, prepend):
     """Create a chart of the number of unique vessels per type"""
-    filename = f"{prepend}_Type"
-    fig, ax = plt.subplots()
+    with plot(f"{prepend}_Type") as ax:
     unique = df[["MMSI", "VesselType"]].drop_duplicates(keep="first")
     sns.countplot("VesselType", data=unique, palette="Paired")
     ax.set_ylabel("Number of Unique MMSI")
-    save_plot(join(PLOTS_DIR, filename))
-    plt.close(fig)
-
 
 def plot_sog(df, prepend):
     """Create a chart of SOGs observed"""
-    filename = f"{prepend}_SOG.png"
-    fig, ax = plt.subplots()
+    with plot(f"{prepend}_SOG") as ax:
     sns.distplot(df["SOG"], kde=False).set_title(f"{prepend} Data")
     ax.set_ylabel("Number of Data Points")
     ax.set_xlabel("SOG (nautical miles/hour)")
@@ -96,42 +98,26 @@ def plot_sog(df, prepend):
         plt.xlim(-50, 50)
     else:
         plt.xlim(0, 50)
-    filepath = join(PLOTS_DIR, filename)
-    save_plot(filepath)
-    plt.close(fig)
-
 
 def plot_acceleration(df):
     """Create a chart of acceleration observed"""
-    filename = f"Acceleration.png"
-    filepath = join(PLOTS_DIR, filename)
-    fig, ax = plt.subplots()
+    with plot(f"Acceleration") as ax:
     sns.distplot(df["Acceleration"], kde=False)
     ax.set_ylabel("Number of Data Points")
     ax.set_xlabel("Acceleration (nautical miles/seconds^2)")
     plt.xlim(-300, 300)
-    save_plot(filepath)
-    plt.close(fig)
-
 
 def plot_alteration(df):
     """Create a chart of alteration observed"""
-    filename = f"Alteration_Degrees.png"
-    filepath = join(PLOTS_DIR, filename)
-    fig, ax = plt.subplots()
+    with plot(f"Alteration_Degrees") as ax:
     sns.distplot(df["Alteration_Degrees"], kde=False)
     ax.set_ylabel("Number of Data Points")
     ax.set_xlabel("Alteration (Degrees)")
     plt.xlim(-180, 180)
-    save_plot(filepath)
-    plt.close(fig)
-
 
 def plot_trip_length(df):
     """Create a chart of trip length observed"""
-    filename = f"Trip_Length.png"
-    filepath = join(PLOTS_DIR, filename)
-    fig, ax = plt.subplots()
+    with plot(f"Trip_Length") as ax:
     trips = df.pivot_table(
         index=["MMSI", "Trip", "VesselType"], values="Step_Distance", aggfunc=np.sum
     ).reset_index()
@@ -144,35 +130,22 @@ def plot_trip_length(df):
     ax.set_ylabel("Number of Trips")
     ax.set_xlabel("Trip Length (m)")
     plt.legend()
-    save_plot(filepath)
-    plt.close(fig)
-
 
 def plot_step_length(df, prepend):
     """Create a chart of step length observed"""
-    filename = f"{prepend}_Step_Length.png"
-    filepath = join(PLOTS_DIR, filename)
-    fig, ax = plt.subplots()
+    with plot(f"{prepend}_Step_Length") as ax:
     sns.distplot(60 * df["Step_Distance"] / df["Interval"], kde=True).set_title(
         "Step Length"
     )
     ax.set_ylabel("Number of Steps")
     ax.set_xlabel("Length (m)")
-    save_plot(filepath)
-    plt.close(fig)
-
 
 def plot_latlon(df):
     """create a distribution of lat/lon"""
-    filename = f"Spatial_Distribution.png"
-    filepath = join(PLOTS_DIR, filename)
-    fig, ax = plt.subplots()
+    with plot(f"Spatial_Distribution") as ax:
     sns.jointplot(x="LON", y="LAT", data=df, kind="kde").set_title(
         "Spatial Distribution"
     )
-    save_plot(filepath)
-    plt.close(fig)
-
 
 def plot_cog(df, prepend):
     """Create a chart of COGs observed by type"""
@@ -190,19 +163,7 @@ def plot_cog(df, prepend):
     ax.set_theta_direction(-1)
 
     ax.legend(loc="upper center", bbox_to_anchor=(0, 1.05), ncol=1, fancybox=True)
-    save_plot(join(PLOTS_DIR, filename))
-    plt.close(fig)
-
-
-def plot_time(df, prepend):
-    """Create a chart of time intervals observed"""
-    filename = f"{prepend}_ToD.png"
-    filepath = join(PLOTS_DIR, filename)
-    fig, ax = plt.subplots()
-    sns.distplot(df["BaseDateTime"], kde=False)
-    ax.set_ylabel("Number of Data Points")
-    ax.set_xlabel("Time of Day (UTC)")
-    save_plot(filepath)
+    save_plot(filename)
     plt.close(fig)
 
 
