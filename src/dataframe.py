@@ -253,7 +253,23 @@ class Basic_Clean(object):
         No loss of information.
         """
         self.df.replace("", np.nan, inplace=True)
+
+        # Log information about dropped data
+        subset = self.df[self.required.extend("VesselType"])
+        subset["Missing_Heading"] = subset["Heading"].isnull()
+        plot_type(subset, "Comparison")
+
+        nulls = subset[subset["Heading"].isnull()]
+        unique = nulls[["MMSI", "VesselType"]].drop_duplicates(keep="first")
+        self.mmsi_missing_heading = unique["MMSI"].unique()
+        LOGGER.info(f"The number of unique MMSIs with missing heading: {len(self.mmsi_missing_heading)}")
+        # drop data
         self.df.dropna(how="any", subset=self.required, inplace=True)
+        self.mmsi = self.df["MMSI"].unique()
+        LOGGER.info(
+            "Number of dropped MMSI's that appear in subsequent dataframe: "
+            f"{sum(el in self.mmsi_missing_heading for el in self.mmsi)}"
+        )
 
     @print_reduction
     def _drop_duplicate_rows(self):
