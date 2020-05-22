@@ -172,6 +172,7 @@ class Postgres_Table(Postgres_Connection):
         LOGGER.info(f"Dropping table {table}...")
         self.run_query(sql)
 
+    @time_this
     def copy_data(self, csv_file):
         """
         Copy data from CSV file to table.
@@ -277,6 +278,16 @@ class Postgres_Table(Postgres_Connection):
         LOGGER.info(f"Projecting {column} from {self.srid} to {new_srid}...")
         self.run_query(sql)
 
+    def alter_storage(self, column):
+        """Set storage for column to external (uncompressed)"""
+        sql = f"""
+            ALTER TABLE {self.table}
+            ALTER COLUMN {column}
+            SET STORAGE EXTERNAL;
+        """
+        LOGGER.info(f"Updating storage to external for column {column}...")
+        self.run_query(sql)
+
     def add_index(self, name, field=None, btree=False, gist=False):
         """
         Add index to table using the given field. If field
@@ -345,6 +356,7 @@ class Postgres_Table(Postgres_Connection):
         LOGGER.info(f"Updating {name} with timezone...")
         self.run_query(sql)
 
+    @time_this
     def table_dataframe(self, table=None, select_col=None, where_cond=None):
         """Return Pandas dataframe of table"""
         if table is None:
@@ -356,13 +368,14 @@ class Postgres_Table(Postgres_Connection):
         if where_cond:
             sql = sql + f""" WHERE {where_cond} """
 
-        self.cur.execute(sql)
-        column_names = [desc[0] for desc in self.cur.description]
+        with self.conn.cursor() as cur:
+            cur.execute(sql)
+            column_names = [desc[0] for desc in cur.description]
         LOGGER.info(
             f"Constructing dataframe for {self.table} with columns "
-            f"{select} and where condition {where_cond}..."
+                f"{select_col} and where condition {where_cond}..."
         )
-        return pd.DataFrame(self.cur.fetchall(), columns=column_names)
+            return pd.DataFrame(cur.fetchall(), columns=column_names)
 
  
 # ------------------------------------------------------------------------------
@@ -443,8 +456,151 @@ class Points_Table(Postgres_Table):
         df = self.table_dataframe()
         sns.countplot("in_tss", data=df, palette="Paired", hue="VesselType")
         save_plot(join(PLOTS_DIR, "TSS"))
-        plt.close(fig)
+class TSS_Intersection_Table(Postgres_Table):
 
+    """
+    All processed point data from MarineCadastre
+    """
+
+    def __init__(self, table, points_input, tss_input):
+        """
+        Connect to default database and set table schema.
+        
+        Args:
+            table (string): Name of table.
+        """
+        super(TSS_Intersection_Table, self).__init__(table)
+        self.points = points_input
+        self.tss = tss_input
+        self.srid = 32610
+
+    def select_intersections(self):
+        """Get last point outside and first point inside"""
+        sql = f"""
+            CREATE TABLE {self.table} AS
+            SELECT 
+                tmp.mmsi, 
+                tmp.trip, 
+                tmp.vesseltype,
+                tmp.vesselname,
+                tmp.datetime, 
+                tmp.geom AS point_geom, 
+                tmp.heading, 
+                tmp.in_tss
+            FROM (
+                SELECT 
+                    mmsi, 
+                    trip,
+                    vesseltype,
+                    vesselname,
+                    datetime,
+                    geom,
+                    heading,
+                    in_tss, 
+                    lag(in_tss) OVER (PARTITION BY mmsi, trip ORDER BY datetime) AS last_tss,
+                    lead(in_tss) OVER (PARTITION BY mmsi, trip ORDER BY datetime) AS next_tss
+                FROM {self.points}
+                ) AS tmp
+            WHERE tmp.vesseltype = 'ferry'
+            AND (tmp.in_tss = False AND tmp.next_tss = True)
+            OR (tmp.in_tss = True AND tmp.last_tss = False) 
+            OR (tmp.in_tss = True AND tmp.next_tss = False)
+            OR (tmp.in_tss = False AND tmp.last_tss = True)
+            ORDER BY mmsi, trip, datetime
+            """
+        self.run_query(sql)
+
+    def add_time_in_tss(self):
+        """Add time in TSS column"""
+        col = "time_in_tss"
+        self.add_column(col, "interval")
+        sql = f"""
+        WITH tmp AS (
+            SELECT 
+                mmsi, 
+                trip, 
+                datetime,
+                in_tss,
+                lag(in_tss) OVER (PARTITION BY mmsi, trip ORDER BY datetime) AS last_tss,
+                datetime - lag(datetime, 2) OVER (PARTITION BY mmsi, trip ORDER BY datetime) AS time_lag
+            FROM {self.table}
+        )
+
+        UPDATE {self.table}
+        SET 
+            {col} = tmp.time_lag
+        FROM 
+            tmp
+        WHERE 
+            {self.table}.mmsi = tmp.mmsi
+        AND {self.table}.trip = tmp.trip
+        AND {self.table}.datetime = tmp.datetime
+        AND tmp.in_tss = False
+        AND tmp.last_tss = True
+        """
+        self.run_query(sql)
+
+    def add_time_between_tss(self):
+        """Add time between TSS column"""
+        col = "time_between_tss"
+        self.add_column(col, "interval")
+        sql = f"""
+        WITH tmp AS (
+            SELECT 
+                mmsi, 
+                trip, 
+                datetime,
+                in_tss,
+                lag(in_tss) OVER (PARTITION BY mmsi, trip ORDER BY datetime) AS last_tss,
+                datetime - lag(datetime, 2) OVER (PARTITION BY mmsi, trip ORDER BY datetime) AS time_lag
+            FROM {self.table}
+        )
+
+        UPDATE {self.table}
+        SET 
+            {col} = tmp.time_lag
+        FROM 
+            tmp
+        WHERE 
+            {self.table}.mmsi = tmp.mmsi
+        AND {self.table}.trip = tmp.trip
+        AND {self.table}.datetime = tmp.datetime
+        AND tmp.in_tss = True
+        AND tmp.last_tss = False
+        """
+        self.run_query(sql)
+    
+    def join_tss(self):
+        """Add tss geom"""
+        col = "geom_tss"
+        self.add_column(col, datatype="MULTIPOLYGON", geometry=True)
+        sql = f"""
+            WITH tmp AS (
+                SELECT 
+                    {self.table}.mmsi, 
+                    {self.table}.trip, 
+                    {self.table}.datetime, 
+                    {self.tss}.geom, 
+                    ST_Boundary({self.tss}.geom), 
+                    {self.tss}.gid
+                FROM {self.table}, {self.tss}
+                WHERE ST_Within({self.table}.point_geom, {self.tss}.geom)
+                AND {self.tss}.gid IN (50, 51, 52, 55)
+            )
+
+            UPDATE {self.table}
+            SET {col} = tmp.geom
+            FROM tmp
+            WHERE {self.table}.mmsi = tmp.mmsi
+            AND {self.table}.trip = tmp.trip
+            AND {self.table}.datetime = tmp.datetime
+        """
+        self.run_query(sql)
+
+    def get_tss_heading(self):
+        sql = f"""
+            SELECT ST_ClosestPoint(geom_tss, point_geom)
+        """
 
 class Tracks_Table(Postgres_Table):
 
