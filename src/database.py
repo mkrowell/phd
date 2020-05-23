@@ -31,10 +31,59 @@ import yaml
 from src import time_this, LOGGER
 from src.dataframe import save_plot
 
+import warnings
+
+warnings.filterwarnings("ignore")
 
 PLOTS_DIR = abspath(join(dirname(__file__), "..", "reports", "figures"))
-plt.style.use("seaborn")
+# plt.style.use("seaborn")
 sns.set(color_codes=True)
+# sns.palplot(sns.color_palette("RdBu_r", 7))
+sns.set_context("poster") 
+plt.style.use('seaborn')
+
+
+def plot_domain_tss(df, name):
+    """Plot the ship domain for the given df"""
+    df["r"] = np.deg2rad(df["bearing_12"])
+    g = sns.FacetGrid(
+        df,
+        col="target ship",
+        row="ownship",
+        subplot_kws=dict(projection="polar"),
+        sharex=False,
+        sharey=False,
+        despine=False,
+        gridspec_kws={"wspace": 1.5},
+    )
+    g.map(sns.scatterplot, "r", "cpa_distance", marker=".", s=30, alpha=0.3)
+
+    # Limit to lower upper triangle of grid
+    # g.axes[1, 2].set_visible(False)
+    # g.axes[2, 1].set_visible(False)
+    # g.axes[2, 2].set_visible(False)
+
+    # Set north to 0 degrees
+    for axes in g.axes.flat:
+        axes.set_theta_zero_location("N")
+        axes.set_theta_direction(-1)
+        axes.title.set_position([0.5, 1.5])
+        axes.yaxis.labelpad = 40
+
+    for i, axes_row in enumerate(g.axes):
+        for j, axes_col in enumerate(axes_row):
+            row, col = axes_col.get_title().split('|')
+            if i == 0:
+                axes_col.set_title(col.strip())
+            else:
+                axes_col.set_title('')
+            if j == 0:
+                ylabel = axes_col.get_ylabel()
+                axes_col.set_ylabel(row.strip() + ' | ' + ylabel)
+
+    save_plot(join(PLOTS_DIR, name), tight=False)
+    plt.close()
+
 
 # ------------------------------------------------------------------------------
 # BASE CLASSES
@@ -45,22 +94,22 @@ class Postgres_Connection(object):
     Open/close standard connection to the postgres database
     """
 
-        # Create connection object to Postgres
+    # Create connection object to Postgres
     LOGGER.info("Connecting to postgres...")
     conn = psycopg2.connect(
         host="localhost",
         dbname="postgres",
         user="postgres",
         password=os.environ["PGPASSWORD"],
-        )
+    )
 
-        # Set standard properties and extensions
+    # Set standard properties and extensions
     with conn.cursor() as cur:
-            cur.execute("SET timezone = 'UTC'")
-            cur.execute("CREATE EXTENSION IF NOT EXISTS postgis")
+        cur.execute("SET timezone = 'UTC'")
+        cur.execute("CREATE EXTENSION IF NOT EXISTS postgis")
         conn.commit()
 
-        # Enable PostGIS extension
+    # Enable PostGIS extension
     register(conn)
 
     # Add functions to database
@@ -93,7 +142,7 @@ class Postgres_Connection(object):
             conn.commit()
         except psycopg2.DatabaseError as err:
             conn.rollback()
-            raise err    
+            raise err
 
     def close_connection(self):
         """Close the database connection, if open"""
@@ -130,7 +179,7 @@ class Postgres_Table(Postgres_Connection):
             except psycopg2.DatabaseError as err:
                 self.conn.rollback()
                 raise err
-                
+
     def create_table(self, filepath=None, columns=None):
         """
         Create table in the database.
@@ -208,7 +257,7 @@ class Postgres_Table(Postgres_Connection):
         datatype_str = f"{datatype}"
         if geometry:
             datatype_str = f"geometry({datatype}, {self.srid})"
-       
+
         # Handle default data types
         default_str = ""
         if default:
@@ -239,7 +288,7 @@ class Postgres_Table(Postgres_Connection):
         Make the given column a POINT/POINTM geometry
         
         Args:
-            name (string): Name of existing column to be made into Point 
+            name (string): Name of existing column to be made into Point
             lon (string): Name of the column containing the longitude of Point
             lat (string): Name of the column containing the latitude of Point
             time (string, optional): Name of the column containing the time 
@@ -330,7 +379,7 @@ class Postgres_Table(Postgres_Connection):
         sql = sql_delete.format(self.table, column, relationship, value)
         LOGGER.info(f"Dropping {column} {relationship} {value} from {self.table}...")
         self.run_query(sql)
-        
+
     def remove_null(self, col):
         """
         Remove rows in the table that have a Null in the col
@@ -346,7 +395,7 @@ class Postgres_Table(Postgres_Connection):
         Args:
             timezone (string): timezone to add time for. Defaults to
                 america/los_angles        
-        """        
+        """
         name = "datetime_local"
         self.add_column(name, datatype="timestamptz")
         sql = f"""
@@ -369,15 +418,15 @@ class Postgres_Table(Postgres_Connection):
             sql = sql + f""" WHERE {where_cond} """
 
         with self.conn.cursor() as cur:
+            LOGGER.info(
+                f"Constructing dataframe for {self.table} with columns "
+                f"{select_col} and where condition {where_cond}..."
+            )
             cur.execute(sql)
             column_names = [desc[0] for desc in cur.description]
-        LOGGER.info(
-            f"Constructing dataframe for {self.table} with columns "
-                f"{select_col} and where condition {where_cond}..."
-        )
             return pd.DataFrame(cur.fetchall(), columns=column_names)
 
- 
+
 # ------------------------------------------------------------------------------
 # NAIS CLASSES
 # ------------------------------------------------------------------------------
@@ -399,7 +448,7 @@ class Points_Table(Postgres_Table):
         self.columns = """
             MMSI integer NOT NULL,
             Trip integer NOT NULL,
-            DateTime timestamptz NOT NULL,
+            DateTime timestamp NOT NULL,
             LAT float8 NOT NULL,
             LAT_UTM float8 NOT NULL,
             LON float8 NOT NULL,
@@ -452,10 +501,20 @@ class Points_Table(Postgres_Table):
         self.run_query(sql)
 
     def plot_tss(self):
-        """Plot count of in versus out of TSS by vessel type"""
-        df = self.table_dataframe()
-        sns.countplot("in_tss", data=df, palette="Paired", hue="VesselType")
+        """
+        Plot count of in versus out of TSS by vessel type
+        """
+        df = self.table_dataframe(select_col="mmsi, datetime, in_tss, vesseltype")
+        LOGGER.info(f"Plotting tss from {self.table}")
+        fig, ax = plt.subplots()
+        sns.countplot("in_tss", data=df, palette="Paired", hue="vesseltype")
+        ax.set_ylabel("Number of Data Points")
+        ax.set_xlabel("In TSS")
         save_plot(join(PLOTS_DIR, "TSS"))
+        plt.close()
+        del df
+
+
 class TSS_Intersection_Table(Postgres_Table):
 
     """
@@ -486,7 +545,11 @@ class TSS_Intersection_Table(Postgres_Table):
                 tmp.datetime, 
                 tmp.geom AS point_geom, 
                 tmp.heading, 
-                tmp.in_tss
+                tmp.in_tss,
+                tss.geom AS tss_geom,
+                tss.gid,
+                ST_ClosestPoint(ST_Boundary(tss.geom), tmp.last_point) AS closest_point,
+                ST_ClosestPoint(ST_Boundary(tss.geom), tmp.prior_point) AS nearby_point
             FROM (
                 SELECT 
                     mmsi, 
@@ -495,112 +558,128 @@ class TSS_Intersection_Table(Postgres_Table):
                     vesselname,
                     datetime,
                     geom,
+                    lag(geom, 1) OVER (PARTITION BY mmsi, trip ORDER BY datetime) AS last_point,
+                    lag(geom, 2) OVER (PARTITION BY mmsi, trip ORDER BY datetime) AS prior_point,
                     heading,
                     in_tss, 
                     lag(in_tss) OVER (PARTITION BY mmsi, trip ORDER BY datetime) AS last_tss,
                     lead(in_tss) OVER (PARTITION BY mmsi, trip ORDER BY datetime) AS next_tss
                 FROM {self.points}
-                ) AS tmp
+                ) AS tmp,
+                {self.tss}
             WHERE tmp.vesseltype = 'ferry'
-            AND (tmp.in_tss = False AND tmp.next_tss = True)
-            OR (tmp.in_tss = True AND tmp.last_tss = False) 
-            OR (tmp.in_tss = True AND tmp.next_tss = False)
-            OR (tmp.in_tss = False AND tmp.last_tss = True)
+            AND (tmp.in_tss = True AND tmp.last_tss = False)
+            AND ST_Within(tmp.geom, {self.tss}.geom)
+            AND {self.tss}.gid IN (50, 51, 52, 55)
             ORDER BY mmsi, trip, datetime
             """
         self.run_query(sql)
 
-    def add_time_in_tss(self):
-        """Add time in TSS column"""
-        col = "time_in_tss"
-        self.add_column(col, "interval")
+    def add_direction(self):
+        """Add N/S to tss"""
+        col = "tss_direction"
+        self.add_column(col, "char(1)")
         sql = f"""
-        WITH tmp AS (
-            SELECT 
-                mmsi, 
-                trip, 
-                datetime,
-                in_tss,
-                lag(in_tss) OVER (PARTITION BY mmsi, trip ORDER BY datetime) AS last_tss,
-                datetime - lag(datetime, 2) OVER (PARTITION BY mmsi, trip ORDER BY datetime) AS time_lag
-            FROM {self.table}
-        )
-
-        UPDATE {self.table}
-        SET 
-            {col} = tmp.time_lag
-        FROM 
-            tmp
-        WHERE 
-            {self.table}.mmsi = tmp.mmsi
-        AND {self.table}.trip = tmp.trip
-        AND {self.table}.datetime = tmp.datetime
-        AND tmp.in_tss = False
-        AND tmp.last_tss = True
-        """
-        self.run_query(sql)
-
-    def add_time_between_tss(self):
-        """Add time between TSS column"""
-        col = "time_between_tss"
-        self.add_column(col, "interval")
-        sql = f"""
-        WITH tmp AS (
-            SELECT 
-                mmsi, 
-                trip, 
-                datetime,
-                in_tss,
-                lag(in_tss) OVER (PARTITION BY mmsi, trip ORDER BY datetime) AS last_tss,
-                datetime - lag(datetime, 2) OVER (PARTITION BY mmsi, trip ORDER BY datetime) AS time_lag
-            FROM {self.table}
-        )
-
-        UPDATE {self.table}
-        SET 
-            {col} = tmp.time_lag
-        FROM 
-            tmp
-        WHERE 
-            {self.table}.mmsi = tmp.mmsi
-        AND {self.table}.trip = tmp.trip
-        AND {self.table}.datetime = tmp.datetime
-        AND tmp.in_tss = True
-        AND tmp.last_tss = False
-        """
-        self.run_query(sql)
-    
-    def join_tss(self):
-        """Add tss geom"""
-        col = "geom_tss"
-        self.add_column(col, datatype="MULTIPOLYGON", geometry=True)
-        sql = f"""
-            WITH tmp AS (
-                SELECT 
-                    {self.table}.mmsi, 
-                    {self.table}.trip, 
-                    {self.table}.datetime, 
-                    {self.tss}.geom, 
-                    ST_Boundary({self.tss}.geom), 
-                    {self.tss}.gid
-                FROM {self.table}, {self.tss}
-                WHERE ST_Within({self.table}.point_geom, {self.tss}.geom)
-                AND {self.tss}.gid IN (50, 51, 52, 55)
-            )
-
             UPDATE {self.table}
-            SET {col} = tmp.geom
-            FROM tmp
-            WHERE {self.table}.mmsi = tmp.mmsi
-            AND {self.table}.trip = tmp.trip
-            AND {self.table}.datetime = tmp.datetime
+            SET {col} = CASE
+                WHEN gid IN (51, 52) THEN 'N' 
+                WHEN gid IN (50, 55) THEN 'S'
+            END
         """
         self.run_query(sql)
 
     def get_tss_heading(self):
+        """Add heading of TSS points"""
+        col = "tss_heading"
+        self.add_column(col, "float(4)")
+        # sql = f"""
+        #     UPDATE {self.table}
+        #     SET {col} = CASE
+        #         WHEN tss_direction = 'N' THEN Degrees(ST_AZIMUTH(nearby_point, closest_point))
+        #         WHEN tss_direction = 'S' THEN Degrees(ST_AZIMUTH(nearby_point, closest_point))
+        #     END
+        # """
         sql = f"""
-            SELECT ST_ClosestPoint(geom_tss, point_geom)
+            UPDATE {self.table}
+            SET {col} = CASE
+                WHEN gid = 52 THEN 354
+                WHEN gid = 55 THEN 174
+                WHEN gid = 51 THEN 346
+                WHEN gid = 50 THEN 166
+            END
         """
+        self.run_query(sql)
+
+    def get_entrance_angle(self):
+        """Add entrance to TSS angle"""
+        col = "entrance_angle"
+        self.add_column(col, "float(4)")
+        sql = f"""
+            UPDATE {self.table}
+            SET {col} = LEAST(normalize_angle(heading - tss_heading, 0, 180), 180 - normalize_angle(heading - tss_heading, 0, 180))
+        """
+        self.run_query(sql)
+
+    def plot_angles(self):
+        """
+        Plot histogram of TSS entrance angles
+        """
+        df = self.table_dataframe(where_cond="gid in (52, 55) and vesselname LIKE 'WSF %'")
+        LOGGER.info(f"Plotting entrance angles from {self.table}")
+        # g = sns.FacetGrid(
+        #     df,
+        #     col="tss_direction",
+        #     row="gid",
+        #     sharex=False,
+        #     sharey=False,
+        #     despine=False,
+        #     gridspec_kws={"wspace": 1.5},
+        #     height=5
+        # )
+        # g.map(sns.distplot, "entrance_angle", kde=False)
+        fig, ax = plt.subplots()
+        sns.distplot(df["entrance_angle"], kde=False)
+        ax.set_ylabel("Number of Entrances")
+        ax.set_xlabel("Entrance Angle")
+        save_plot("TSS_Entrance_Angle", False)
+        plt.close()
+        del df
+    
+
+class Ship_Table(Postgres_Table):
+
+    """
+    Static ship information from points table
+    """
+
+    def __init__(self, table, points):
+        """
+        Connect to default database and set table schema.
+        
+        Args:
+            table (string): Name of table
+            points (string): Name of points table
+        """
+        super(Ship_Table, self).__init__(table)
+        self.points = points
+
+    def extract_ship_info(self):
+        """Extract static ship information"""
+        sql = f"""
+            CREATE TABLE {self.table} AS
+            SELECT
+                MMSI,
+                VesselName,
+                VesselType,
+                Length,
+                COUNT(mmsi) AS data_points,
+                COUNT(DISTINCT trip) AS trips,
+                FOREIGN KEY (MMSI) REFERENCES {self.points} (MMSI)
+            FROM {self.points}
+            GROUP BY MMSI
+        """
+        self.run_query(sql)
+
 
 class Tracks_Table(Postgres_Table):
 
@@ -616,7 +695,7 @@ class Tracks_Table(Postgres_Table):
             table (string): Name of table.
         """
         super(Tracks_Table, self).__init__(table)
-        self.cur = self.conn.cursor()      
+        self.cur = self.conn.cursor()
 
     def convert_to_tracks(self, points):
         """Add LINESTRING for each MMSI, TrackID."""
@@ -667,7 +746,6 @@ class CPA_Table(Postgres_Table):
         self.input = input_table
         self.shore = shore_table
 
-    @time_this
     def tracks_tracks(self):
         """Make pairs of tracks that happen in same time interval."""
         sql = f"""
@@ -690,37 +768,34 @@ class CPA_Table(Postgres_Table):
         LOGGER.info(f"Joining {self.input} with itself to make {self.table}...")
         self.run_query(sql)
 
-    @time_this
     def cpa_time(self):
         """Add time when CPA occurs"""
         col = "cpa_time"
         self.add_column(col, "TIMESTAMP")
         sql = f"""
             UPDATE {self.table}
-            SET {col} = to_timestamp(cpa_epoch)::timestamptz
+            SET {col} = to_timestamp(cpa_epoch)::timestamp
         """
         LOGGER.info(f"Updating column {col}...")
         self.run_query(sql)
 
-    @time_this
     def cpa_points(self):
         """Add track points where CPA occurs"""
         for i in [1, 2]:
             col = f"cpa_point_{i}"
             self.add_column(col, "POINTM", geometry=True)
-        sql = f"""
-            UPDATE {self.table}
+            sql = f"""
+                UPDATE {self.table}
                 SET {col} = ST_Force3DM(
                     ST_GeometryN(
                         ST_LocateAlong(track_{i}, cpa_epoch),
                         1
                     )
-                    )
-        """
+                )
+            """
             LOGGER.info(f"Updating column {col}...")
             self.run_query(sql)
-    
-    @time_this
+
     def cpa_line(self):
         """Add line between CPA points"""
         col = "cpa_line"
@@ -732,7 +807,6 @@ class CPA_Table(Postgres_Table):
         LOGGER.info(f"Updating column {col}...")
         self.run_query(sql)
 
-    @time_this
     def delete_shore_cross(self):
         """Delete CPAs that line on shore."""
         LOGGER.info("Deleting shore intersects from {0}...".format(self.table))
@@ -741,199 +815,14 @@ class CPA_Table(Postgres_Table):
             USING {self.shore} s
             WHERE ST_Intersects(c.cpa_line, s.geom)
         """
-        self.cur.execute(sql)
-        self.conn.commit()
-
-
-# class CPA_Table(Postgres_Table):
-
-#     def __init__(self, conn, table, input_table):
-#         '''Connect to default database.'''
-#         super(CPA_Table, self).__init__(conn, table)
-#         self.cur = self.conn.cursor()
-#         self.input = input_table
-
-#     def points_points(self):
-#         '''Join points to itself to get closest points.'''
-#         print('Joining points to points to find CPAs...')
-#         sql = """
-#             CREATE TABLE {table} AS
-#             SELECT
-#                 p.basedatetime as datetime,
-#                 p.mmsi AS mmsi1,
-#                 p.track AS track1,
-#                 p.step_cog_degrees AS step_cog1,
-#                 p.cog_cosine AS cog_cos1,
-#                 p.step_acceleration AS accel1,
-#                 p.point_cog AS cog1,
-#                 p.heading AS heading1,
-#                 p.sog AS sog1,
-#                 p.vesseltype AS type1,
-#                 p.length AS length1,
-#                 p.in_tss AS point_tss1,
-#                 p.geom AS point1,
-#                 p2.mmsi AS mmsi2,
-#                 p2.track AS track2,
-#                 p2.step_cog_degrees AS step_cog2,
-#                 p2.cog_cosine AS cog_cos2,
-#                 p2.step_acceleration AS accel2,
-#                 p2.point_cog AS cog2,
-#                 p2.heading AS heading2,
-#                 p2.sog AS sog2,
-#                 p2.vesseltype AS type2,
-#                 p2.length AS length2,
-#                 p2.in_tss AS point_tss2,
-#                 p2.geom AS point2,
-#                 ST_Distance(p.geom, p2.geom)::int AS distance,
-#                 min(ST_Distance(p.geom, p2.geom)::int) OVER (PARTITION BY p.mmsi, p.track, p2.mmsi, p2.track) AS cpa_distance,
-#                 normalize_angle(angle_difference(DEGREES(ST_Azimuth(p.geom, p2.geom)), p.heading),0,360) AS bearing12,
-#                 ROW_NUMBER() OVER (PARTITION BY p.mmsi, p.track, p2.mmsi, p2.track ORDER BY p2.basedatetime ASC) as rownum
-#             FROM {points} AS p LEFT JOIN {points} AS p2
-#             ON p.basedatetime = p2.basedatetime
-#             AND p.mmsi != p2.mmsi
-#         """.format(table=self.table, points=self.input)
-#         self.cur.execute(sql)
-#         self.conn.commit()
-#
-#     def add_duplicate_rank(self):
-#         '''Rank duplicate interactions.'''
-#         rank = 'rank'
-#         self.add_column(rank, 'integer')
-#
-#         sql = """
-#             UPDATE {table}
-#             SET {rank} = CASE
-#             WHEN mmsi1::int > mmsi2::int THEN 1 ELSE 2 END
-#         """.format(table=self.table, rank=rank)
-#         self.cur.execute(sql)
-#         self.conn.commit()
-#
-#     def cpa_range(self, buffer=10):
-#         '''Keep only the 20 points around the CPA.'''
-#         sql = """
-#             WITH current AS (
-#                 SELECT mmsi1, track1, mmsi2, track2, rownum
-#                 FROM {table}
-#                 WHERE distance = cpa_distance
-#             )
-#
-#             DELETE FROM {table}
-#             USING current
-#             WHERE {table}.mmsi1 = current.mmsi1
-#             AND {table}.track1 = current.track1
-#             AND {table}.mmsi2 = current.mmsi2
-#             AND {table}.track2 = current.track2
-#             AND {table}.rownum BETWEEN current.rownum - {buffer} AND current.rownum + {buffer}
-#         """.format(table=self.table, buffer=buffer)
-#         self.cur.execute(sql)
-#         self.conn.commit()
-#
-#     def cpa_attributes(self, buffer=10):
-#         '''Keep only the 20 points around the CPA.'''
-#         time = 'cpa_time'
-#         self.add_column(time, 'timestamp')
-#
-#         point1 = 'cpa_point1'
-#         self.add_column(point1, datatype='pointm', geometry=True)
-#
-#         point2 = 'cpa_point2'
-#         self.add_column(point2,  datatype='pointm', geometry=True)
-#         sql = """
-#             WITH current AS (
-#                 SELECT mmsi1, track1, mmsi2, track2, rownum
-#                 FROM {table}
-#                 WHERE distance = cpa_distance
-#             )
-#             UPDATE {table}
-#             SET
-#                 {time} = {table}.datetime,
-#                 {p1} = {table}.point1,
-#                 {p2} = {table}.point2
-#             FROM current
-#             WHERE {table}.mmsi1 = current.mmsi1
-#             AND {table}.track1 = current.track1
-#             AND {table}.mmsi2 = current.mmsi2
-#             AND {table}.track2 = current.track2
-#             AND {table}.rownum = current.rownum
-#         """.format(table=self.table, time=time, p1=point1, p2=point2)
-#         self.cur.execute(sql)
-#         self.conn.commit()
-#
-#     def encounter_type(self):
-#         '''Add type of interaction.'''
-#         conType = 'encounter'
-#         self.add_column(conType, datatype='varchar')
-#
-#         sql = """
-#             WITH first AS (
-#                 SELECT *
-#                 FROM {table}
-#                 WHERE (mmsi1, track1, mmsi2, track2) IN (
-#                     SELECT mmsi1, track1, mmsi2, track2
-#                     FROM (
-#                         SELECT
-#                             mmsi1,
-#                             track1,
-#                             mmsi2,
-#                             track2,
-#                             ROW_NUMBER() OVER(PARTITION BY mmsi1, track1, mmsi2, track2 ORDER BY datetime ASC) as rk
-#                         FROM {table}
-#                     ) AS subquery
-#                 WHERE rk = 1
-#                 )
-#             )
-#
-#             UPDATE {table}
-#             SET {type} = CASE
-#                 WHEN @first.cogdiff12 BETWEEN 165 AND 195 THEN 'head-on'
-#                 WHEN @first.cogdiff12 < 15 OR @first.cogdiff12 > 345 THEN 'overtaking'
-#                 ELSE 'crossing'
-#                 END
-#             FROM first
-#             WHERE first.mmsi1 = {table}.mmsi1
-#             AND first.track1 = {table}.track1
-#             AND first.mmsi2 = {table}.mmsi2
-#             AND first.track2 = {table}.track2
-#         """.format(table=self.table, type=conType)
-#         self.cur.execute(sql)
-#         self.conn.commit()
-#
-#     def check_nearby(self):
-#         '''Delete encounters that are just nearby and not really encounter.'''
-#         print('Deleting near ships with no encounter...')
-#         sql = """
-#             DELETE FROM {0}
-#             WHERE (
-#                 (encounter = 'head-on' OR encounter = 'overtaking')
-#                 AND (
-#                     90 NOT BETWEEN min(bearing12::int) and max(bearing12::int) OR
-#                     270 NOT BETWEEN min(bearing12::int) and max(bearing12::int)
-#             ) OR (
-#                 (encounter = 'crossing')
-#                 AND (
-#                     0 NOT BETWEEN min(bearing12::int)-5 and min(bearing12::int) +5 OR
-#                     360 NOT BETWEEN max(bearing12::int)-5 and max(bearing12::int) +5 OR
-#                     180 NOT BETWEEN min(bearing12::int) and max(bearing12::int)
-#             )
-#         """.format(self.table)
-#         self.cur.execute(sql)
-#         self.conn.commit()
-#
-
-
-
-    # int4range(
-    #      min(normalize_angle(angle_difference(DEGREES(ST_Azimuth(p.geom, p2.geom)), p.heading),0,360)) OVER (PARTITION BY p.mmsi, p.track, p2.mmsi, p2.track)::int,
-    #      max(normalize_angle(angle_difference(DEGREES(ST_Azimuth(p.geom, p2.geom)), p.heading),0,360)) OVER (PARTITION BY p.mmsi, p.track, p2.mmsi, p2.track)::int) AS brange,
-
-
-
-
-
-
+        self.run_query(sql)
 
 
 class Encounters_Table(Postgres_Table):
+
+    """
+    Create table with encounter information from cpa and point tables
+    """
 
     def __init__(self, table, input_points, input_cpa):
         """Connect to default database"""
@@ -941,8 +830,8 @@ class Encounters_Table(Postgres_Table):
         self.cur = self.conn.cursor()
         self.points = input_points
         self.cpa = input_cpa
+        self._df = None
 
-    @time_this
     def cpa_points(self):
         """Make pairs of tracks that happen in same time interval"""
         LOGGER.info("Joining points with cpas to make encounter table...")
@@ -998,110 +887,33 @@ class Encounters_Table(Postgres_Table):
             LEFT JOIN {self.points} p
                 ON p.datetime between c.cpa_time - INTERVAL '10 minutes' AND c.cpa_time + INTERVAL '10 minutes'
                 AND p.mmsi = c.mmsi_1
+                And p.trip = c.trip_1
             INNER JOIN {self.points} p2
                 ON p2.mmsi = c.mmsi_2
+                AND p2.trip = c.trip_2
                 AND p2.datetime = p.datetime
         """
         self.run_query(sql)
-    
-    @time_this
-    def plot_domain_type(self, tss=None):
-        """Plot CPA ship domain"""
-        if tss is None:
-            self.df = self.table_dataframe()
-            name = "Ship_Domain"
-        if tss:
-            self.df = self.table_dataframe(
-                where_cond="tss_1 = True and tss_2 = True"
-            )
-            name = "Ship_Domain_Inside_TSS"
-        elif tss is False:
-            self.df = self.table_dataframe(
-                where_cond="cpa_distance < 3000 and tss_1 = False and tss_2 = False"
-            )
-            name = "Ship_Domain_Outside_TSS"
 
-        self.df["r"] = np.deg2rad(df["bearing_12"])
-        try:
-            g = sns.FacetGrid(
-                self.df,
-                col="type_2",
-                row="type_1",
-                subplot_kws=dict(projection="polar"),
-                sharex=False,
-                sharey=False,
-                despine=False,
-                gridspec_kws={"wspace": 1.5},
-                # height=5
-            )
-        except Exception as err:
-            LOGGER.error(err)
-            
-        g.map(sns.scatterplot, "r", "cpa_distance", marker=".", s=30)
-       
-        # Limit to lower upper triangle of grid
-        g.axes[1, 2].set_visible(False)
-        g.axes[2, 1].set_visible(False)
-        g.axes[2, 2].set_visible(False)
+    def drop_sparse_encounters(self):
+        """Drop encounters with less than 15 data points"""
+        sql = f"""
+        DELETE FROM {self.table}
+        USING (
+            SELECT mmsi_1, trip_1, mmsi_2, trip_2, count(datetime) AS num_rows
+            FROM {self.table}
+            GROUP BY mmsi_1, trip_1, mmsi_2, trip_2
+            HAVING count(datetime) < 15 
+        ) sparse
+        WHERE
+            {self.table}.mmsi_1 = sparse.mmsi_1
+            AND {self.table}.mmsi_2 = sparse.mmsi_2
+            AND {self.table}.trip_1 = sparse.trip_1
+            AND {self.table}.trip_2 = sparse.trip_2
+        """
+        LOGGER.info("Deleting sparse encounters...")
+        self.run_query(sql)
 
-        # Set north to 0 degrees
-        for axes in g.axes.flat:
-            axes.set_theta_zero_location("N")
-            axes.set_theta_direction(-1)
-            axes.title.set_position([0.5, 1.1])
-            axes.yaxis.labelpad = 25
-
-        save_plot(join(PLOTS_DIR, name), tight=False)
-        plt.close(fig)
-
-    @time_this
-    def plot_domain_encounter(self, tss=None):
-        """Plot CPA ship domain limited to 3nm"""
-        if tss is None:
-            df = self.table_dataframe(where_cond="cpa_distance < 5556")
-            name = "Ship_Domain_by_Encounter"
-
-        if tss:
-            df = self.table_dataframe(
-                where_cond="cpa_distance < 5556 and tss_1 = True and tss_2 = True"
-            )
-            name = "Ship_Domain_Inside_TSS_By_Encounter"
-
-        elif tss is False:
-            df = self.table_dataframe(
-                where_cond="cpa_distance < 3000 and tss_1 = False and tss_2 = False"
-            )
-            name = "Ship_Domain_Outside_TSS_By_Encounter"
-
-        df["r"] = np.deg2rad(df["bearing_12"])
-
-        fig = plt.figure(figsize=(20, 20))
-        g = sns.FacetGrid(
-            df, 
-            row="encounter",
-            subplot_kws=dict(projection="polar"),
-            sharex=False, 
-            sharey=False, 
-            despine=False,
-            gridspec_kws={"wspace": 1.5},
-            # height=5
-        )
-        g.map(
-            sns.scatterplot, "r", "cpa_distance", marker=".", s=30,
-        )
-    
-        g.axes[1, 2].set_visible(False)
-        g.axes[2, 1].set_visible(False)
-        g.axes[2, 2].set_visible(False)
-
-        for axes in g.axes.flat:
-            axes.set_theta_zero_location("N")
-            axes.set_theta_direction(-1)
-            # axes.legend(bbox_to_anchor=(1.05, 1), loc=2, borderaxespad=0.)
-        
-        save_plot(join(PLOTS_DIR, name), tight=False)
-
-    @time_this
     def encounter_type(self):
         """Add type of interaction"""
         conType = "encounter"
@@ -1125,13 +937,15 @@ class Encounters_Table(Postgres_Table):
                 WHERE rk = 1
                 )
             )
-
-            UPDATE {self.table}
-            SET {conType} = CASE
-                WHEN @first.heading_diff_12 BETWEEN 165 AND 195 THEN 'head-on'
-                WHEN @first.heading_diff_12 < 15 OR @first.heading_diff_12 > 345 THEN 'overtaking'
-                ELSE 'crossing'
-                END
+            
+            UPDATE 
+                {self.table}
+            SET 
+                {conType} = CASE
+                    WHEN @first.heading_diff_12 BETWEEN 165 AND 195 THEN 'head-on'
+                    WHEN @first.heading_diff_12 < 15 OR @first.heading_diff_12 > 345 THEN 'overtaking'
+                    ELSE 'crossing'
+                    END
             FROM first
             WHERE first.mmsi_1 = {self.table}.mmsi_1
             AND first.trip_1 = {self.table}.trip_1
@@ -1140,11 +954,13 @@ class Encounters_Table(Postgres_Table):
         """
         self.run_query(sql)
 
-    @time_this
-    def giveway_info(self):
-        """Add GW, SO info"""
-        vessel = "ship_1_give_way"
-        self.add_column(vessel, datatype="integer")
+    def give_way_info(self):
+        """Add type of interaction"""
+        vessel_1 = "give_way_1"
+        self.add_column(vessel_1, datatype="integer")
+
+        vessel_2 = "give_way_2"
+        self.add_column(vessel_2, datatype="integer")
 
         sql = f"""
             WITH first AS (
@@ -1164,10 +980,11 @@ class Encounters_Table(Postgres_Table):
                 WHERE rk = 1
                 )
             )
-
-            UPDATE {self.table}
-            SET
-                {vessel} = CASE
+            
+            UPDATE 
+                {self.table}
+            SET 
+                {vessel_1} = CASE
                     WHEN {self.table}.encounter = 'overtaking' THEN CASE
                         WHEN first.bearing_12 BETWEEN 90 AND 270 THEN 0
                         ELSE 1
@@ -1175,6 +992,17 @@ class Encounters_Table(Postgres_Table):
                     WHEN {self.table}.encounter = 'crossing' THEN CASE
                         WHEN first.bearing_12 BETWEEN 0 AND 112.5 THEN 1
                         ELSE 0
+                        END
+                    WHEN {self.table}.encounter = 'head-on' THEN 1
+                    END,
+                {vessel_2} = CASE
+                    WHEN {self.table}.encounter = 'overtaking' THEN CASE
+                        WHEN first.bearing_12 BETWEEN 90 AND 270 THEN 1
+                        ELSE 0
+                        END
+                    WHEN {self.table}.encounter = 'crossing' THEN CASE
+                        WHEN first.bearing_12 BETWEEN 0 AND 112.5 THEN 0
+                        ELSE 1
                         END
                     WHEN {self.table}.encounter = 'head-on' THEN 1
                     END
@@ -1186,7 +1014,6 @@ class Encounters_Table(Postgres_Table):
         """
         self.run_query(sql)
 
-    @time_this
     def dcpa(self):
         """Add distance to CPA"""
         name1 = "dcpa_1"
@@ -1203,7 +1030,6 @@ class Encounters_Table(Postgres_Table):
         self.cur.execute(sql.format(self.table, name2, "point_2", "cpa_point_2"))
         self.conn.commit()
 
-    @time_this
     def tcpa(self):
         """Add time to CPA"""
         name = "tcpa"
@@ -1214,7 +1040,6 @@ class Encounters_Table(Postgres_Table):
         """
         self.run_query(sql)
 
-    @time_this
     def time_range(self):
         """Add time period of interaction"""
         LOGGER.info("Adding time period to {0}".format(self.table))
@@ -1256,15 +1081,634 @@ class Encounters_Table(Postgres_Table):
         """
         self.run_query(sql)
 
-    def plot_encounters(self):
+    @property
+    def df(self):
+        """Return dataframe with columns necessary for reporting and plotting summary"""
+        if self._df is not None:
+            return self._df
+        self._df = self.table_dataframe()
+        self._df["cpa_time"] = self._df["cpa_time"].dt.round("1min")
+        self._df["bearing_12"] = self._df["bearing_12"].round()
+        self._df["r"] = np.deg2rad(self._df["bearing_12"])
+        self._df.rename(
+            columns = {
+                "type_1": "ownship", 
+                "type_2": "target ship",
+                "tss_1": "ownship in TSS",
+                "tss_2": "target ship in TSS"
+            }, inplace=True
+        )
+        return self._df
 
-        df = self.table.table_dataframe()
-        for name, group in df.groupby(['mmsi1','track1','mmsi2','track2']):
-            name = 'Plot_{0}_{1}_{2}_{3}.png'.format()
-            fig = plt.figure(figsize=(12, 4), dpi=None, facecolor='white')
-            fig.suptitle('Track Comparison', fontsize=12, fontweight='bold', x=0.5, y =1.01)
-            plt.title(' => '.join([str(i) for i in name]), fontsize=10, loc='center')
-            # plt.yticks([])
+    def df_tss(self, limit):
+        """Return df of points inside TSS"""
+        limit_cond = self._df["cpa_distance"] < limit
+        return self._df[
+            limit_cond & 
+            (self._df["tss_1"] == True) & 
+            (self._df["tss_2"] == True)
+        ]
+
+    def df_tss_no(self, limit):
+        """Return df of points outside TSS"""
+        limit_cond = self._df["cpa_distance"] < limit
+        return self._df[
+            limit_cond & 
+            (self._df["tss_1"] == False) & 
+            (self._df["tss_2"] == False)
+        ]
+
+    def df_tss_mix(self, limit):
+        """Return df of points out/in TSS"""
+        limit_cond = self._df["cpa_distance"] < limit
+        return self._df[
+            limit_cond & 
+            ((df["tss_1"] == True) & (df["tss_2"] == False)) | 
+            ((df["tss_1"] == False) & (df["tss_2"] == True))
+        ]
+
+    # PLOTS
+    @time_this
+    def plot_ship_domain(self, hue):
+        """Plot CPA ship domain"""
+        limit = 7408  # 4 nm
+        df = self.df
+        df["target ship in TSS"] = df["target ship in TSS"].astype(int)
+        df.rename(columns={"alteration_degrees_1": "target ship alteration"},inplace=True)
+        g = sns.FacetGrid(
+            df[df["distance_12"] < limit],
+            col="ownship",
+            subplot_kws=dict(projection="polar"),
+            sharex=False,
+            sharey=False,
+            despine=False,
+            gridspec_kws={"wspace": 1.5},
+        )
+        g.map(
+            sns.scatterplot, 
+            "r", 
+            "distance_12", 
+            hue=df[hue],
+            marker=".", 
+            s=15, 
+            alpha=0.8
+        )
+        
+        # Set north to 0 degrees
+        for axes in g.axes.flat:
+            axes.set_theta_zero_location("N")
+            axes.set_theta_direction(-1)
+            axes.title.set_position([0.5, 1.5])
+            axes.yaxis.labelpad = 40
+            axes.legend()
+
+        g.set_axis_labels("Bearing To Target Ship", "Distance to Target Ship")
+        # plt.legend(loc='upper left', bbox_to_anchor=(1.25, 0.5), ncol=1)
+        save_plot(join(PLOTS_DIR, f"Ship Domain by Vessel Type {hue}"), tight=False)
+        plt.close()
+
+    # def plot_modes(elf):
+    #     # plot poly
+    #     bearings = [0, 45, 90, 135, 180, 225, 270, 315]
+    #     rads = [np.radians(b) for b in bearings]
+    #     groups = self.df[(self.df["r"].isin(rads)) & (self.df["cpa_distance"] < limit)]        
+    #     modes = groups.groupby("r").agg(lambda x:x.value_counts().index[0])
+        
+    #     p = sns.FacetGrid(
+    #         modes,
+    #         col="ownship",
+    #         row="target ship in TSS",
+    #         subplot_kws=dict(projection="polar"),
+    #         sharex=False,
+    #         sharey=False,
+    #         despine=False,
+    #         gridspec_kws={"wspace": 1.5},
+    #     )
+    #     p.map(
+    #         sns.lineplot, 
+    #         "r", 
+    #         "distance_12", 
+    #     )
+    #     save_plot(join(PLOTS_DIR, "Ship Domain Mode by Vessel Type"), tight=False)
+    #     plt.close()
+    #     del modes, groups
+
+    @time_this
+    def plot_alteration_dcpa(self):
+        """Plot give way and stand on alterations as function of DCPA""" 
+        cols = [
+            "mmsi", 
+            "trip",
+            "Type", 
+            "ownship", 
+            "target ship", 
+            "cpa_distance", 
+            "acceleration", 
+            "alteration", 
+            "DCPA", 
+            "TCPA", 
+            "distance_12",
+            "encounter"
+        ]
+        give_way = self.df[(self.df["ship_1_give_way"] == 1) & ("encounter" != "head-on") ]
+        give_way["Type"] = "Give Way"
+        give_way.rename(
+            columns={
+                "mmsi_1": "mmsi",
+                "trip_1": "trip",
+                "acceleration_1": "acceleration", 
+                "alteration_degrees_1": "alteration", 
+                "dcpa_1": "DCPA", 
+                "tcpa": "TCPA"
+            }, 
+            inplace=True
+        )
+        give_way = give_way[cols]
+
+        stand_on = self.df[(self.df["ship_1_give_way"] == 0) & ("encounter" != "head-on")]
+        stand_on["Type"] = "Stand On"
+        stand_on.rename(
+            columns={
+                "mmsi_1": "mmsi",
+                "trip_1": "trip",
+                "acceleration_1": "acceleration", 
+                "alteration_degrees_1": "alteration", 
+                "dcpa_1": "DCPA", 
+                "tcpa": "TCPA"
+            }, 
+            inplace=True
+        )
+        stand_on = stand_on[cols]
+
+        for limit in [1852, 2*1852, 3*1852]:
+            give_way = give_way[give_way["cpa_distance"] < limit]
+            stand_on = stand_on[stand_on["cpa_distance"] < limit]
+            fig, ax = plt.subplots()
+            sns.distplot(stand_on.groupby(["mmsi","trip"])["alteration"].max(), label="Stand On", kde=True, hist=False)
+            sns.distplot(give_way.groupby(["mmsi","trip"])["alteration"].max(), label="Give Way", kde=True, hist=False)
+            plt.legend()
+            ax.set_ylabel("Number of Encounters")
+            ax.set_xlabel("Alteration (Degrees)")
+            ax.set_title(f"Alterations during Encounters with CPA less than {limit/1852} nm")
+            save_plot(join(PLOTS_DIR, f"Alterations during Encounters with CPA less than {limit/1852} nm.png"), tight=False)
+            plt.close()
+
+            alt_limit = 15
+            df = pd.concat([give_way, stand_on])
+            df['Altered_Course'] = np.where(df['alteration'] > alt_limit, 1, 0)
+            altered = df[(df['Altered_Course'] == 1)]
+            give_way_groups = altered[altered["Type"] == "Give Way"].sort_values("TCPA").groupby(["mmsi", "trip"]).first()
+            stand_on_groups = altered[altered["Type"] == "Stand On"].sort_values("TCPA").groupby(["mmsi", "trip"]).first()
+
+            fig, ax = plt.subplots()
+            sns.distplot(give_way_groups["distance_12"]/1852, label="Give Way", kde=True, hist=False)
+            sns.distplot(stand_on_groups["distance_12"]/1852, label="Stand On", kde=True, hist=False)
+            plt.legend()
+            ax.set_ylabel("Number of Encounters")
+            ax.set_xlabel("Alter-course-distance (meters)")
+            ax.set_title(f"Alter-course-distance during Encounters with CPA less than {limit/1852} nm and Alteration > {alt_limit} degrees")
+            save_plot(join(PLOTS_DIR, f"Alter-course-distance during Encounters with CPA less than {limit/1852} nm and Alteration > {alt_limit} degrees.png"), tight=False)
+            plt.close()
+
+            fig, ax = plt.subplots()
+            groups = altered[altered["TCPA"]<1].sort_values("TCPA").groupby(["mmsi", "trip"]).first()
+            sns.countplot("TCPA", hue="Type", data=groups)
+            ax.set_ylabel("Number of Encounters")
+            ax.set_xlabel("Alter-course-time (TCPA)")
+            ax.set_title(f"Alter-course-time during Encounters with CPA less than {limit/1852} nm and Alteration > {alt_limit} degrees")
+            save_plot(join(PLOTS_DIR, f"Alter-course-time during Encounters with CPA less than {limit/1852} nm and Alteration > {alt_limit} degrees.png"), tight=False)
+            plt.close()
+
+
+# `   def plot_first_move(self):
+
+#         df= self.df[self.df['ship_1_give_way']==0]
+#         df['SO_alter'] = np.where(df['alteration_degrees_1'] > 10, 1 , 0)
+#         df['GW_alter'] = np.where(df['alteration_degrees_1'] > 10, 1 , 0)
+#         df.drop((df['SO_alter']==0) & (df['GW_alter']==0))
+#         df['Diff']  = df['GW_alter'] - df['SO_atler']
+#         df['Moved First'] = np.where(df['Diff'] = 1, "Give Way", "Stand On")
+
+`
+       
+
+        
+
+
+        # for i in [0, 1, 2]:
+        #     g = sns.FacetGrid(
+        #         df,
+        #         col="target ship",
+        #         row="ownship",
+        #         sharex=False,
+        #         sharey=False,
+        #         despine=False,
+        #         gridspec_kws={"wspace": 1.5},
+        #         height=5
+        #     )
+        #     g.map(sns.distplot, x="alteration_degrees", y="DCPA", hue="Type", kde=True)
+
+        #     # Limit to lower upper triangle of grid
+        #     g.axes[1, 2].set_visible(False)
+        #     g.axes[2, 1].set_visible(False)
+        #     g.axes[2, 2].set_visible(False)
+
+        #     for axes in g.axes.flat:
+        #         axes.title.set_position([0.5, 0.5])
+        #         axes.yaxis.labelpad = 40
+
+        
+
+    # @time_this
+    # def plot_distance_type(self):
+    #     """Plot CPA ship domain""" 
+    #     limit = 11112      
+    #     limit_cond = self.df["cpa_distance"] < limit 
+    #     df_all = self.df[limit_cond]
+    #     df_tss = self.df[
+    #         (limit_cond) & (self.df["tss_1"] == True) & (self.df["tss_2"] == True)
+    #     ]
+    #     df_no_tss = self.df[
+    #         (limit_cond) & (self.df["tss_1"] == False) & (self.df["tss_2"] == False)
+    #     ]
+
+    #     dfs = [df_all, df_tss, df_no_tss]
+    #     names = ["CPA", "CPA_In_TSS", "CPA_Out_TSS"]
+
+    #     for i in [0, 1, 2]:
+    #         g = sns.FacetGrid(
+    #             dfs[i],
+    #             col="target ship",
+    #             row="ownship",
+    #             sharex=False,
+    #             sharey=False,
+    #             despine=False,
+    #             gridspec_kws={"wspace": 1.5},
+    #             height=5
+    #         )
+    #         g.map(sns.distplot, "cpa_distance", kde=False)
+
+    #         # Limit to lower upper triangle of grid
+    #         g.axes[1, 2].set_visible(False)
+    #         g.axes[2, 1].set_visible(False)
+    #         g.axes[2, 2].set_visible(False)
+
+    #         # for axes in g.axes.flat:
+    #             # axes.title.set_position([0.5, 0.5])
+    #             # axes.yaxis.labelpad = 40
+
+    #         save_plot(join(PLOTS_DIR, names[i]), tight=False)
+    #         plt.close()
+        
+    #     del df_all, df_tss, df_no_tss
+
+
+    # @time_this
+    # def plot_cpa_type(self):
+    #     """Plot CPA ship domain"""
+    #     limit = 2778  # 1.5 nm
+    #     df = self._df[self._df['datetime'] == self._df['cpa_time']]
+    #     limit_cond = df["cpa_distance"] < limit
+        
+    #     df_all = df[limit_cond]
+    #     df_tss = df[
+    #         limit_cond & (df["tss_1"] == True) & (df["tss_2"] == True)
+    #     ]
+    #     df_no_tss = df[
+    #         limit_cond & (df["tss_1"] == False) & (df["tss_2"] == False)
+    #     ]
+    #     df_mix_tss = df[
+    #         limit_cond & ((df["tss_1"] == True) & (df["tss_2"] == False)) | (df["tss_1"] == False) & (df["tss_2"] == True)
+    #     ]
+
+    #     dfs = [df_all, df_tss, df_no_tss]
+    #     names = ["Ship_Domain", "Ship_Domain_In_TSS", "Ship_Domain_Out_TSS"]
+
+    #     for i in [0, 1, 2]:
+    #         plot_domain_tss(dfs[i], names[i])
+    #     del df_all, df_tss, df_no_tss
+
+    # @time_this
+    # def plot_domain_encounter(self):
+        # """Plot CPA ship domain based on encounter"""
+        # limit = 2778
+        # limit_cond = self.df["cpa_distance"] < limit
+
+        # for encounter_type in ["head-on", "overtaking", "crossing"]:
+        #     df_all = self.df[limit_cond & (self.df["encounter"] == encounter_type)]
+        #     df_tss = self.df[
+        #         limit_cond
+        #         & (self.df["encounter"] == encounter_type)
+        #         & (self.df["tss_1"] == True)
+        #         & (self.df["tss_2"] == True)
+        #     ]
+        #     df_no_tss = self.df[
+        #         limit_cond
+        #         & (self.df["tss_1"] == False)
+        #         & (self.df["tss_2"] == False)
+        #         & (self.df["encounter"] == encounter_type)
+        #     ]
+
+        #     dfs = [df_all, df_tss, df_no_tss]
+        #     names = [
+        #         f"Ship_Domain_Encounter_{encounter_type}",
+        #         f"Ship_Domain_In_TSS_Encounter_{encounter_type}",
+        #         f"Ship_Domain_Out_TSS_Encounter_{encounter_type}",
+        #     ]
+
+        #     for i in [0, 1, 2]:
+        #         plot_domain_tss(dfs[i], names[i])
+
+        #     del df_all, df_tss, df_no_tss
+
+    def encounter_table(self):
+        """Return count of each encounter type by vessel type"""
+        df = self.df 
+        # add subset duplicates
+        df.drop_duplicates(inplace=True)
+        return pd.pivot_table(
+            df, 
+            values='mmsi_1', 
+            index=['encounter', 'ownship'],
+            columns=['target ship'], aggfunc='count'
+        )
+
+
+class Head_On_Table(Postgres_Table):
+
+    """
+    Create a table of only head-on encounters
+    """
+
+    def __init__(self, table, input_table):
+        """
+        Connect to default database.
+        
+        Args:
+            table (string): Name of table
+            input_table (string): Name of encounters table
+        """
+        super(Head_On_Table, self).__init__(table)
+        self.cur = self.conn.cursor()
+        self.input = input_table
+        self._df = None
+
+    def select_type(self):
+        """Select only the crossing interactions"""
+        sql = f"""
+            CREATE TABLE {self.table} AS
+            SELECT *
+            FROM {self.input}
+            WHERE encounter = 'head-on'
+        """
+        LOGGER.info("Selecting head-on interactions...")
+        self.run_query(sql)
+
+    def delete_reciprocal(self):
+        """Delete duplicate reciprocal encounters"""
+        sql = f"""
+            DELETE FROM {self.table} t1
+            USING {self.table} t2
+            WHERE t1.mmsi_1 < t2.mmsi_1
+            AND t1.mmsi_1 = t2.mmsi_2
+            AND t1.cpa_distance = t2.cpa_distance
+            AND t1.cpa_time = t2.cpa_time
+        """
+        LOGGER.info("Deleting reciprocal encounters...")
+        self.run_query(sql)
+
+    @property
+    def df(self):
+        """Return table dataframe"""
+        if self._df is not None:
+            return self._df
+        cols = 'mmsi_1, trip_1, type_1, mmsi_2, trip_2, type_2, alteration_degrees_1, alteration_degrees_2, acceleration_1, acceleration_2, give_way_1, give_way_2'
+        self._df = self.table_dataframe(select_col=cols)
+        self._df["id"] = self._df.index
+        self._df = pd.wide_to_long(
+            self._df, 
+            stubnames=[
+                "mmsi", 
+                "trip", 
+                "type", 
+                "alteration_degrees", 
+                "acceleration",
+                "give_way"
+            ], 
+            i ="id",
+            j="ship", 
+            sep='_'
+        )
+        return self._df
+
+    def plot_alteration(self):
+        """plot histogram of alterations"""
+        # types = self._df.groupby(["type"])
+        # g = sns.FacetGrid(self._df, col="type")
+        g.map(self._df.kdeplot, "alteration_degrees")
+        g.add_legend();
+        
+        # Limit to lower upper triangle of grid
+        g.axes[1, 2].set_visible(False)
+        g.axes[2, 1].set_visible(False)
+        g.axes[2, 2].set_visible(False)
+
+        for axes in g.axes.flat:
+            axes.title.set_position([0.5, 1.5])
+            axes.yaxis.labelpad = 40
+
+        for i, axes_row in enumerate(g.axes):
+            for j, axes_col in enumerate(axes_row):
+                row, col = axes_col.get_title().split('|')
+                if i == 0:
+                    axes_col.set_title(col.strip())
+                else:
+                    axes_col.set_title('')
+                if j == 0:
+                    ylabel = axes_col.get_ylabel()
+                    axes_col.set_ylabel(row.strip() + ' | ' + ylabel)
+
+        save_plot(join(PLOTS_DIR, "Head-on Alteration"), tight=False)
+        plt.close()
+
+
+
+class Overtaking_Table(Postgres_Table):
+
+    """
+    Create a table of only overtaking encounters
+    """
+
+    def __init__(self, table, input_table):
+        """
+        Connect to default database.
+        
+        Args:
+            table (string): Name of table
+            input_table (string): Name of encounters table
+        """
+        super(Overtaking_Table, self).__init__(table)
+        self.cur = self.conn.cursor()
+        self.input = input_table
+        self._df = None
+
+    def select_type(self):
+        """Select only the crossing interactions"""
+        sql = f"""
+            CREATE TABLE {self.table} AS
+            SELECT *
+            FROM {self.input}
+            WHERE encounter = 'overtaking'
+        """
+        LOGGER.info("Selecting overtaking interactions...")
+        self.run_query(sql)
+
+    def delete_reciprocal(self):
+        """
+        Delete duplicate reciprocal encounters
+
+        Results in ship1 = give way, ship2 = standon
+        """
+        sql = f"""
+            DELETE FROM {self.table} t1
+            USING {self.table} t2
+            WHERE t1.ship_1_give_way = 0
+            AND t1.cpa_distance = t2.cpa_distance
+            AND t1.cpa_time = t2.cpa_time
+        """
+        LOGGER.info("Deleting reciprocal encounters...")
+        self.run_query(sql)
+
+    @property
+    def df(self):
+        """Return table dataframe"""
+        if self._df is not None:
+            return self._df
+        cols = 'mmsi_1, trip_1, type_1, mmsi_2, trip_2, type_2, alteration_degrees_1, alteration_degrees_2, acceleration_1, acceleration_2, give_way_1, give_way_2'
+        self._df = self.table_dataframe(select_col=cols)
+        self._df["id"] = self._df.index
+        self._df = pd.wide_to_long(
+            self._df, 
+            stubnames=[
+                "mmsi", 
+                "trip", 
+                "type", 
+                "alteration_degrees", 
+                "acceleration",
+                "give_way"
+            ], 
+            i ="id",
+            j="ship", 
+            sep='_'
+        )
+        return self._df
+
+    def plot_alteration(self):
+
+        fig, ax = plt.subplots()
+        sns.distplot(self._df[self._df['give_way']==0]["alteration_degrees"], kde=False, label="give-way")
+        sns.distplot(self._df[self._df['give_way']==1]["alteration_degrees"], kde=False, label="stand-on")
+        plt.legend()
+        save_plot(join(PLOTS_DIR, "Overtaking Alteration"), tight=False)
+        plt.close()
+
+    def plot_acceleration(self):
+
+        fig, ax = plt.subplots()
+        sns.distplot(self._df[self._df['give_way']==0]["acceleration"], kde=False, label="give-way")
+        sns.distplot(self._df[self._df['give_way']==1]["acceleration"], kde=False, label="stand-on")
+        plt.legend()
+        save_plot(join(PLOTS_DIR, "Overtaking Alteration"), tight=False)
+        plt.close()
+
+
+
+class Crossing_Table(Postgres_Table):
+
+    """
+    Create a table of only crossing encounters
+    """
+
+    def __init__(self, table, input_table):
+        """
+        Connect to default database.
+        
+        Args:
+            table (string): Name of table
+            input_table (string): Name of encounters table
+        """
+        super(Crossing_Table, self).__init__(table)
+        self.cur = self.conn.cursor()
+        self.input = input_table
+        self._df = None
+
+    def select_type(self):
+        """Select only the crossing interactions"""
+        sql = f"""
+            CREATE TABLE {self.table} AS
+            SELECT *
+            FROM {self.input}
+            WHERE encounter = 'crossing'
+        """
+        LOGGER.info("Selecting crossing interactions...")
+        self.run_query(sql)
+
+    def delete_reciprocal(self):
+        """
+        Delete duplicate reciprocal encounters
+
+        Results in ship1 = give way, ship2 = standon
+        """
+        sql = f"""
+            DELETE FROM {self.table} t1
+            USING {self.table} t2
+            WHERE t1.ship_1_give_way = 0
+            AND t1.cpa_distance = t2.cpa_distance
+            AND t1.cpa_time = t2.cpa_time
+        """
+        LOGGER.info("Deleting reciprocal encounters...")
+        self.run_query(sql)
+
+    @property
+    def df(self):
+        """Return table dataframe"""
+        if self._df is not None:
+            return self._df
+        cols = 'mmsi_1, trip_1, type_1, mmsi_2, trip_2, type_2, alteration_degrees_1, alteration_degrees_2, acceleration_1, acceleration_2'
+        self._df = self.table_dataframe(select_col=cols)
+        self._df.rename(columns = {"alteration_degrees_1": "give_way_alteration", "alteration_degrees_2": "stand_on_alteration", "acceleration_1":"give_way_acceleration", "acceleration_2": "stand_on_acceleration"}, inplace=True)
+        return self._df
+
+    def plot_alteration(self):
+
+        g = sns.FacetGrid(self.df, col="type_1", row = "type_2")
+        g.map(sns.distplot, "give_way_alteration", kde=True)
+        g.map(sns.distplot, "stand_on_alteration", kde=True)
+        g.add_legend();
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    # def plot_encounters(self):
+
+    #     df = self.table.table_dataframe()
+    #     for name, group in df.groupby(['mmsi_1','track1','mmsi2','track2']):
+    #         name = 'Plot_{0}_{1}_{2}_{3}.png'.format()
+    #         fig = plt.figure(figsize=(12, 4), dpi=None, facecolor='white')
+    #         fig.suptitle('Track Comparison', fontsize=12, fontweight='bold', x=0.5, y =1.01)
+    #         plt.title(' => '.join([str(i) for i in name]), fontsize=10, loc='center')
+    #         # plt.yticks([])
+
 
 # ax1 = fig.add_subplot(111)
 # ax1.set_ylabel('COG')
@@ -1299,57 +1743,61 @@ class Encounters_Table(Postgres_Table):
 
 
 
-
-
-
 # class Crossing_Table(Postgres_Table):
-#
 #     def __init__(self, conn, table, input_analysis):
-#         '''Connect to default database.'''
+#         """Connect to default database."""
 #         super(Crossing_Table, self).__init__(conn, table)
 #         self.cur = self.conn.cursor()
 #         self.input = input_analysis
-#         self.colregs = '{0}_colregs'.format(self.table)
-#         self.others = '{0}_others'.format(self.table)
-#
+#         self.colregs = "{0}_colregs".format(self.table)
+#         self.others = "{0}_others".format(self.table)
+
 #     def select_type(self):
-#         '''Select only the crossing interactions.'''
-#         print('Selecting crossing interactions...')
-#         sql = """
-#             CREATE TABLE {0} AS
+#         """Select only the crossing interactions."""
+#         LOGGER.info("Selecting crossing interactions...")
+#         sql = f"""
+#             CREATE TABLE {self.table} AS
 #             SELECT
 #                 *,
 #                 avg(stand_on_cog_cos) OVER (PARTITION BY mmsi1, track1, mmsi2, track2) AS avg_cog_cos,
 #                 avg(stand_on_accel) OVER (PARTITION BY mmsi1, track1, mmsi2, track2) AS avg_accel
 #             FROM {1}
 #             WHERE encounter = 'crossing'
-#         """.format(self.table, self.input)
+#         """.format(
+#             self.table, self.input
+#         )
 #         self.cur.execute(sql)
 #         self.conn.commit()
-#
+
 #     def separate_colregs(self):
-#         '''Create table of colregs compliant interactions.'''
-#         print('Selecting colreg compliant interactions...')
+#         """Create table of colregs compliant interactions."""
+#         LOGGER.info("Selecting colreg compliant interactions...")
 #         sql_colregs = """
 #             CREATE TABLE {0} AS
 #             SELECT *
 #             FROM {1}
 #             WHERE avg_cog_cos >= 0.999
 #             AND avg_accel <= abs(10)
-#         """.format(self.colregs, self.table)
+#         """.format(
+#             self.colregs, self.table
+#         )
 #         self.cur.execute(sql_colregs)
 #         self.conn.commit()
-#
-#         print('Selecting colreg compliant interactions...')
+
+#         LOGGER.info("Selecting colreg compliant interactions...")
 #         sql_others = """
 #             CREATE TABLE {0} AS
 #             SELECT *
 #             FROM {1}
 #             WHERE avg_cog_cos < 0.999
 #             AND avg_accel > abs(10)
-#         """.format(self.others, self.table)
+#         """.format(
+#             self.others, self.table
+#         )
 #         self.cur.execute(sql_others)
 #         self.conn.commit()
+
+
 #
 # class Overtaking_Table(Postgres_Table):
 #
@@ -1363,7 +1811,7 @@ class Encounters_Table(Postgres_Table):
 #
 #     def select_type(self):
 #         '''Select only the overtaking interactions.'''
-#         print('Selecting overtaking interactions...')
+#         LOGGER.info('Selecting overtaking interactions...')
 #         sql = """
 #             CREATE TABLE {0} AS
 #             SELECT
@@ -1378,7 +1826,7 @@ class Encounters_Table(Postgres_Table):
 #
 #     def separate_colregs(self):
 #         '''Create table of colregs compliant interactions.'''
-#         print('Selecting colreg compliant interactions...')
+#         LOGGER.info('Selecting colreg compliant interactions...')
 #         sql_colregs = """
 #             CREATE TABLE {0} AS
 #             SELECT *
@@ -1389,7 +1837,7 @@ class Encounters_Table(Postgres_Table):
 #         self.cur.execute(sql_colregs)
 #         self.conn.commit()
 #
-#         print('Selecting colreg compliant interactions...')
+#         LOGGER.info('Selecting colreg compliant interactions...')
 #         sql_others = """
 #             CREATE TABLE {0} AS
 #             SELECT *
@@ -1403,26 +1851,7 @@ class Encounters_Table(Postgres_Table):
 #
 
 #
-#
-# # -------------def build_grid(self):
-#     # '''Create grid table.'''
-#     # print('Constructing grid table...')
-#     # self.grid_df = dataframes.Sector_Dataframe(
-#     #     self.lonMin,
-#     #     self.lonMax,
-#     #     self.latMin,
-#     #     self.latMax,
-#     #     self.stepSize
-#     # ).generate_df()
-#     # self.grid_csv = join(self.root, 'grid_table.csv')
-#     # self.grid_df.to_csv(self.grid_csv, index=True, header=False)
-#     # self.table_grid.drop_table()
-#     #
-#     # self.table_grid.create_table()
-#     # self.table_grid.copy_data(self.grid_csv)
-#     # self.table_grid.add_points()
-#     # self.table_grid.make_bounding_box()----------------------------------------------------------------
-#
+
 # # class Near_Table(Postgres_Table):
 # #
 # #     def __init__(self, conn, table, input_table):
@@ -1455,7 +1884,7 @@ class Encounters_Table(Postgres_Table):
 # #
 # #     def near_points(self):
 # #         '''Make pairs of points that happen in same sector and time interval.'''
-# #         print('Joining nais_points with itself to make near table...')
+# #         LOGGER.info('Joining nais_points with itself to make near table...')
 # #         sql = """
 # #             CREATE TABLE {0} AS
 # #             SELECT
@@ -1521,397 +1950,52 @@ class Encounters_Table(Postgres_Table):
 #
 
 
-# class Grid_Table(Postgres_Table):
+# def track_changes(self):
+#     '''Reorganize data into give way and stand on.'''
+#     LOGGER.info('Adding course info to {0}'.format(self.table))
+#     cog_gw = 'give_way_cog_cos'
+#     cog_so = 'stand_on_cog_cos'
+#     accel_gw = 'give_way_accel'
+#     accel_so = 'stand_on_accel'
+#     type_gw = 'give_way_type'
+#     type_so = 'stand_on_type'
 #
-#     def __init__(self, conn, table):
-#         '''Connect to default database.'''
-#         super(Grid_Table, self).__init__(conn, table)
-#         self.cur = self.conn.cursor()
+#     self.add_column(cog_gw, datatype='float(4)')
+#     self.add_column(cog_so, datatype='float(4)')
+#     self.add_column(accel_gw, datatype='float(4)')
+#     self.add_column(accel_so, datatype='float(4)')
+#     self.add_column(type_gw, datatype='varchar')
+#     self.add_column(type_so, datatype='varchar')
 #
-#         self.columns = """
-#             SectorID char(5) PRIMARY KEY,
-#             MinLon float8 NOT NULL,
-#             MinLat float8 NOT NULL,
-#             MaxLon float8 NOT NULL,
-#             MaxLat float8 NOT NULL
-#         """
+#     sql = """
+#         UPDATE {table}
+#         SET
+#             {cog_gw} = CASE
+#                 WHEN ship1_give_way = 1 THEN cog_cos1 ELSE cog_cos2 END,
+#             {cog_so} = CASE
+#                 WHEN ship1_give_way = 1 THEN cog_cos2 ELSE cog_cos1 END,
+#             {accel_gw} = CASE
+#                 WHEN ship1_give_way = 1 THEN accel1 ELSE accel2 END,
+#             {accel_so} = CASE
+#                 WHEN ship1_give_way = 1 THEN accel2 ELSE accel1 END,
+#             {type_gw} = CASE
+#                 WHEN ship1_give_way = 1 THEN type1 ELSE type2 END,
+#             {type_so} = CASE
+#                 WHEN ship1_give_way = 1 THEN type2 ELSE type1 END
+#     """.format(
+#         table=self.table,
+#         cog_gw=cog_gw,
+#         cog_so=cog_so,
+#         accel_gw=accel_gw,
+#         accel_so=accel_so,
+#         type_gw=type_gw,
+#         type_so=type_so
+#     )
+#     self.cur.execute(sql)
+#     self.conn.commit()
 #
-#     def add_points(self):
-#         '''Add Point geometry to the database.'''
-#         self.add_column('leftBottom', datatype='POINT', geometry=True)
-#         self.add_column('leftTop', datatype='POINT', geometry=True)
-#         self.add_column('rightTop', datatype='POINT', geometry=True)
-#         self.add_column('rightBottom', datatype='POINT', geometry=True)
-#
-#         print('Adding PostGIS POINTs to {0}...'.format(self.table))
-#         self.add_point('leftBottom', 'minlon', 'minlat')
-#         self.add_point('leftTop', 'minlon', 'maxlat')
-#         self.add_point('rightTop', 'maxlon', 'maxlat')
-#         self.add_point('rightBottom', 'maxlon', 'minlat')
-#
-#     def make_bounding_box(self):
-#         '''Add polygon column in order to do spatial analysis.'''
-#         print('Adding PostGIS POLYGON to {0}...'.format(self.table))
-#         self.add_column('boundingbox', datatype='Polygon', geometry=True)
-#         sql = """
-#             UPDATE {0}
-#             SET {1} = ST_SetSRID(ST_MakePolygon(
-#                 ST_MakeLine(array[{2}, {3}, {4}, {5}, {6}])
-#             ), 4326)
-#         """.format(
-#             self.table,
-#             'boundingbox',
-#             'leftBottom',
-#             'leftTop',
-#             'rightTop',
-#             'rightBottom',
-#             'leftBottom'
-#             )
-#         self.cur.execute(sql)
-#         self.conn.commit()
 
-    # def track_changes(self):
-    #     '''Reorganize data into give way and stand on.'''
-    #     print('Adding course info to {0}'.format(self.table))
-    #     cog_gw = 'give_way_cog_cos'
-    #     cog_so = 'stand_on_cog_cos'
-    #     accel_gw = 'give_way_accel'
-    #     accel_so = 'stand_on_accel'
-    #     type_gw = 'give_way_type'
-    #     type_so = 'stand_on_type'
-    #
-    #     self.add_column(cog_gw, datatype='float(4)')
-    #     self.add_column(cog_so, datatype='float(4)')
-    #     self.add_column(accel_gw, datatype='float(4)')
-    #     self.add_column(accel_so, datatype='float(4)')
-    #     self.add_column(type_gw, datatype='varchar')
-    #     self.add_column(type_so, datatype='varchar')
-    #
-    #     sql = """
-    #         UPDATE {table}
-    #         SET
-    #             {cog_gw} = CASE
-    #                 WHEN ship1_give_way = 1 THEN cog_cos1 ELSE cog_cos2 END,
-    #             {cog_so} = CASE
-    #                 WHEN ship1_give_way = 1 THEN cog_cos2 ELSE cog_cos1 END,
-    #             {accel_gw} = CASE
-    #                 WHEN ship1_give_way = 1 THEN accel1 ELSE accel2 END,
-    #             {accel_so} = CASE
-    #                 WHEN ship1_give_way = 1 THEN accel2 ELSE accel1 END,
-    #             {type_gw} = CASE
-    #                 WHEN ship1_give_way = 1 THEN type1 ELSE type2 END,
-    #             {type_so} = CASE
-    #                 WHEN ship1_give_way = 1 THEN type2 ELSE type1 END
-    #     """.format(
-    #         table=self.table,
-    #         cog_gw=cog_gw,
-    #         cog_so=cog_so,
-    #         accel_gw=accel_gw,
-    #         accel_so=accel_so,
-    #         type_gw=type_gw,
-    #         type_so=type_so
-    #     )
-    #     self.cur.execute(sql)
-    #     self.conn.commit()
-    #
-
-# ------------------------------------------------------------------------------
-# MAIN CLASS
-# ------------------------------------------------------------------------------
-@time_all
-class NAIS_Database(object):
-
-    '''
-    Build PostgreSQL database of NAIS point data.
-    '''
-
-    def __init__(self, city, year):
-        # arguments
-        self.city = city
-        self.year = year
-        self.password = password
-
-        # file parameters
-        self.root = tempfile.mkdtemp()
-        self.nais_file = join(self.root, 'AIS_All.csv')
-
-        # spatial parameters
-        param_yaml = join(dirname(__file__), 'settings.yaml')
-        with open(param_yaml, 'r') as stream:
-            self.parameters = yaml.safe_load(stream)[self.city]
-
-        self.zone = self.parameters['zone']
-        self.lonMin = self.parameters['lonMin']
-        self.lonMax = self.parameters['lonMax']
-        self.latMin = self.parameters['latMin']
-        self.latMax = self.parameters['latMax']
-        self.srid = self.parameters['srid']
-
-        # time parameters
-        # self.months = [str(i).zfill(2) for i in range(1, 13)]
-        self.months = ['01']
-
-        # database parameters
-        self.conn = psycopg2.connect(
-            host='localhost',
-            dbname='postgres',
-            user='postgres',
-            password=self.password)
-
-        # Add functions to database
-        sql = """
-            CREATE OR REPLACE FUNCTION normalize_angle(
-                angle FLOAT,
-                range_start FLOAT,
-                range_end FLOAT)
-            RETURNS FLOAT AS $$
-            BEGIN
-                RETURN (angle - range_start) - FLOOR((angle - range_start)/(range_end - range_start))*(range_end - range_start) + range_start;
-            END; $$
-            LANGUAGE PLPGSQL;
-
-            CREATE OR REPLACE FUNCTION angle_difference(
-                angle1 FLOAT,
-                angle2 FLOAT)
-            RETURNS FLOAT AS $$
-            BEGIN
-                RETURN DEGREES(ATAN2(
-                    SIN(RADIANS(angle1) - RADIANS(angle2)),
-                    COS(RADIANS(angle1) - RADIANS(angle2))
-                ));
-            END; $$
-            LANGUAGE PLPGSQL
-        """
-        self.conn.cursor().execute(sql)
-        self.conn.commit()
-
-        # Add SRID
-        self.conn.cursor().execute(self.srid)
-        self.conn.commit()
-
-       
-
-        # eda
-        # self.table_eda = EDA_Table(
-        #     self.conn,
-        #     'eda_points_{0}'.format(self.city)
-        # )
-        # self.table_eda_tracks_mmsi = Tracks_Table(
-        #     self.conn,
-        #     'eda_tracks_mmsi_{0}'.format(self.city)
-        # )
-        # self.table_eda_tracks_trajectory = Tracks_Table(
-        #     self.conn,
-        #     'eda_tracks_trajectory_{0}'.format(self.city)
-        # )
-
-
-
-        # self.table_points = Points_Table(
-        #     self.conn,
-        #     'points_{0}'.format(self.city)
-        # )
-        # self.table_cpas = CPA_Table(
-        #     self.conn,
-        #     'cpa_{0}'.format(self.city),
-        #     self.table_points.table
-        # )
-
-
-        # self.table_tracks = Tracks_Table(
-        #     self.conn,
-        #     'tracks_{0}'.format(self.city)
-        # )
-        # self.table_cpa = CPA_Table(
-        #     self.conn,
-        #     'cpa_{0}'.format(self.city),
-        #     self.table_tracks.table,
-        #     self.table_shore.table
-        # )
-
-        # # Encounters
-        # self.table_encounters = Encounters_Table(
-        #     self.conn,
-        #     'encounters_{0}_cog'.format(self.city),
-        #     self.table_points.table,
-        #     self.table_cpa.table
-        # )
-        #
-        #
-
-
-
-
-
-
-        # self.table_crossing = Crossing_Table(
-        #     self.conn,
-        #     'crossing_{0}'.format(self.city),
-        #     self.table_analysis.table
-        # )
-        # self.table_overtaking = Overtaking_Table(
-        #     self.conn,
-        #     'overtaking_{0}'.format(self.city),
-        #     self.table_analysis.table
-        # )
-
-    @property
-    def nais_csvs(self):
-        return glob(self.root + '\\AIS*.csv')
-
-    # BUILD DATABASE -----------------------------------------------------------
-    # def build_tables(self):
-    #     '''Build database of raw data.'''
-    #     start = time.time()
-    #     try:
-    #         # Points
-    #         # self.build_nais_points()
-
-    #         # Tracks
-    #         # self.build_nais_tracks()
-
-    #         # CPAsdf
-    #         # self.build_nais_cpas()
-
-    #         # Analysis
-    #         # self.build_nais_encounters()
-    #         # self.build_nais_analysis()
-
-    #     except Exception as err:
-    #         print(err)
-    #         self.conn.rollback()
-    #         self.conn.close()
-    #     finally:
-    #         shutil.rmtree(self.root)
-    #         end = time.time()
-    #         print('Elapsed Time: {0} minutes'.format((end-start)/60))
-
-  
-
-  
-
-    def build_nais_eda(self):
-        '''Build nais exploratory data analysis table.'''
-        # Download and process raw AIS data from MarineCadastre.gov
-        # if not exists(self.nais_file):
-        #     raw = NAIS_Download(self.root, self.city, self.year)
-        #     for month in self.months:
-        #         raw.download_nais(month)
-        #     raw.clean_up()
-        #     raw.preprocess_eda()
-
-        # Create table
-        self.table_eda.drop_table()
-        self.table_eda.create_table()
-        self.table_eda.copy_data(self.nais_file)
-        self.table_eda.add_local_time()
-
-        # Add postgis point and project to UTM 10 SRID
-        self.table_eda.add_geometry()
-        self.table_eda.project_column('geom', 'POINTM', 32610)
-        self.table_eda.add_index("idx_geom", "geom", type="gist")
-
-        # Make tracks on MMSI only and on MMSI, Trajectory
-        points = self.table_eda.table
-        self.table_eda_tracks_mmsi.drop_table()
-        self.table_eda_tracks_mmsi.convert_to_tracks(points, groupby='mmsi, type')
-        self.table_eda_tracks_trajectory.drop_table()
-        self.table_eda_tracks_trajectory.convert_to_tracks(points, groupby='mmsi, trajectory, type')
-
-
-
-    def build_nais_points(self):
-        '''Build nais points table.'''
-        # Create table
-        self.table_points.drop_table()
-        self.table_points.create_table()
-        self.table_points.copy_data(self.nais_file)
-
-        # Add postgis point and project to UTM 10 SRID
-        self.table_points.add_geometry()
-        self.table_points.project_column('geom', 'POINTM', 32610)
-        self.table_points.add_index("idx_geom", "geom")
-        self.table_points.add_tss(self.table_tss.table)
-
-        # Add time index for join
-        self.table_points.add_index("idx_time", "datetime")
-
-    def build_nais_interactions(self):
-        '''Join points to points to get CPA.'''
-        self.table_cpas.drop_table()
-
-        # Join points to points and select closest CPAs
-        self.table_cpas.points_points()
-        self.table_cpas.add_index("idx_distance", "cpa_distance")
-        self.table_cpas.reduce_table('cpa_distance', '>=', 0.5*1852)
-
-        # Add rank to duplicates
-        self.table_cpas.add_index("idx_mmsi", "mmsi1")
-        self.table_cpas.add_duplicate_rank()
-
-        # Select the 20 points around the CPA
-        self.table_cpas.cpa_range()
-        self.table_cpas.cpa_attributes()
-
-        # Add encounter type
-        self.table_cpas.encounter_type()
-
-    def build_nais_tracks(self):
-        '''Create tracks table from points table.'''
-        print('Constructing nais_tracks table...')
-        self.table_tracks.drop_table()
-        self.table_tracks.convert_to_tracks(self.table_points.table)
-
-        self.table_tracks.add_index("idx_gist_period", "period", type="gist")
-        self.table_tracks.add_index("idx_duration", "duration")
-
-        self.table_tracks.reduce_table('duration', '<=', '00:30:00')
-
-    def build_nais_cpas(self):
-        '''Create table to generate pair-wise cpa.'''
-        self.table_cpa.drop_table()
-
-        # Join tracks pairwise
-        self.table_cpa.tracks_tracks()
-        self.table_cpa.remove_null('cpa_epoch')
-
-        # Add CPA attributes
-        self.table_cpa.cpa_time()
-        self.table_cpa.cpa_points()
-        self.table_cpa.cpa_distance()
-
-        self.table_cpa.add_index("idx_distance", "point_distance")
-        self.table_cpa.reduce_table('point_distance','>',  3*1852)
-
-        # Remove cpas that cross the shore
-        self.table_cpa.cpa_line()
-        self.table_cpa.delete_shore_cross()
-
-        # Add rank to duplicate interactions
-        self.table_cpa.add_duplicate_rank()
-
-    def build_nais_encounters(self):
-        '''Add point data to cpa instances.'''
-        self.table_encounters.drop_table()
-
-        # Add point data to CPA
-        self.table_encounters.cpa_points()
-
-        # Get encounter type
-        self.table_encounters.encounter_type()
-        self.table_encounters.check_nearby()
-
-        # Add encounter info
-        self.table_encounters.giveway_info()
-        self.table_encounters.dcpa()
-        self.table_encounters.tcpa()
-
-
-
-
-
-
-
+ 
 
 #         # plot every encounter cog v time, sog v time, step_cog v tcpa
 #
@@ -1927,7 +2011,7 @@ class NAIS_Database(object):
 #     def window_column(self, name, window_query):
 #         """
 #         Allows column assignment using a window functions.
-        
+
 #         Args:
 #             name (string): Name of column to update
 #             select_query (string): Expression to apply the window to
@@ -1936,16 +2020,43 @@ class NAIS_Database(object):
 #             UPDATE {self.table}
 #             SET {name} = temp.SubQueryColumn
 #             FROM (
-#                 SELECT 
+#                 SELECT
 #                     MMSI,
 #                     Trip,
 #                     DateTime,
 #                     {window_query} OVER {self.window_mmsi} AS SubQueryColumn
 #                 FROM {self.table}
 #             ) AS temp
-#             WHERE 
+#             WHERE
 #                 temp.MMSI = {self.table}.MMSI AND
 #                 temp.Trip = {self.table}.Trip AND
-#                 temp.DateTime = {self.table}.DateTime        
+#                 temp.DateTime = {self.table}.DateTime
 #         """
 #         return sql
+#  class Encounter_Table(Postgres_Table):
+
+
+#
+
+#
+#     def check_nearby(self):
+#         '''Delete encounters that are just nearby and not really encounter.'''
+#         LOGGER.info('Deleting near ships with no encounter...')
+#         sql = """
+#             DELETE FROM {0}
+#             WHERE (
+#                 (encounter = 'head-on' OR encounter = 'overtaking')
+#                 AND (
+#                     90 NOT BETWEEN min(bearing12::int) and max(bearing12::int) OR
+#                     270 NOT BETWEEN min(bearing12::int) and max(bearing12::int)
+#             ) OR (
+#                 (encounter = 'crossing')
+#                 AND (
+#                     0 NOT BETWEEN min(bearing12::int)-5 and min(bearing12::int) +5 OR
+#                     360 NOT BETWEEN max(bearing12::int)-5 and max(bearing12::int) +5 OR
+#                     180 NOT BETWEEN min(bearing12::int) and max(bearing12::int)
+#             )
+#         """.format(self.table)
+#         self.cur.execute(sql)
+#         self.conn.commit()
+#
