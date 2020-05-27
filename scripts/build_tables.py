@@ -1,12 +1,12 @@
 #!/usr/bin/env python
-'''
+"""
 .. script::
     :language: Python Version 3.7.4
     :platform: Windows 10
     :synopsis: build basic tables in Postgres
 
 .. moduleauthor:: Maura Rowell <mkrowell@uw.edu>
-'''
+"""
 
 
 # ------------------------------------------------------------------------------
@@ -17,7 +17,8 @@ import sys
 import yaml
 
 sys.path.append(abspath("."))
-import src
+import src.database
+import src.clean
 
 
 # ------------------------------------------------------------------------------
@@ -34,77 +35,134 @@ with open(parameters_file, "r") as stream:
     parameters = yaml.safe_load(stream)[city]
 
 
-# # ------------------------------------------------------------------------------
-# # BUILD SHORELINE TABLE
-# # ------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
+# BUILD SHORELINE TABLE
+# ------------------------------------------------------------------------------
 # # Create a Postgres table from the shoreline shapefile
-# shapefile_shore = src.Shapefile_Download('shore').output
-# table_shore = src.Postgres_Table('shore')
+# shapefile_shore = src.Shapefile_Download("shore").output
+# table_shore = src.Postgres_Table("shore")
 # table_shore.create_table(filepath=shapefile_shore)
 
 # # Transform to UTM 10 SRID
-# table_shore.project_column('geom', 'MULTILINESTRING', srid)
-# table_shore.add_index('idx_geom_shore', 'geom', gist=True)
-# table_shore.add_index('idx_region', 'regions', gist=False)
+# table_shore.project_column("geom", "MULTILINESTRING", srid)
+# table_shore.alter_storage("geom")
+# table_shore.add_index("idx_geom_shore", "geom", gist=True)
+# table_shore.add_index("idx_region", "regions", gist=False)
 
-# # # Keep only the relevant shore line
-# table_shore.reduce_table('regions', '!=', parameters['region'])
+# # Keep only the relevant shore line
+# table_shore.reduce_table("regions", "!=", parameters["region"])
 
 
-# # ------------------------------------------------------------------------------
-# # BUILD TSS TABLE
-# # ------------------------------------------------------------------------------
-# # Create a Postgres table from the tss shapefile'
-# shapefile_tss = src.Shapefile_Download('tss').output
-# table_tss = src.Postgres_Table('tss')
+# ------------------------------------------------------------------------------
+# BUILD TSS TABLE
+# ------------------------------------------------------------------------------
+# # Create a Postgres table from the tss shapefile"
+# shapefile_tss = src.Shapefile_Download("tss").output
+table_tss = src.database.Postgres_Table("tss")
 # table_tss.create_table(filepath=shapefile_tss)
 
 # # Transform to UTM 10 SRID
-# table_shore.project_column('geom', 'MULTILINESTRING', srid)
-# table_tss.add_index('idx_geom_tss', 'geom', gist=True)
-# table_tss.add_index('idx_objl', 'objl', gist=False)
+# table_tss.project_column("geom", "MULTIPOLYGON", srid)
+# table_tss.add_index("idx_geom_tss", "geom", gist=True)
+# table_tss.add_index("idx_objl", "objl", gist=False)
 
 # # Keep only the relevant TSS
-# table_tss.reduce_table('objl', '!=', parameters['tss'])
+# table_tss.reduce_table("objl", "!=", parameters["tss"])
 
 
 # ------------------------------------------------------------------------------
-# BUILD NAIS TABLES
+# BUILD POINTS TABLE
 # ------------------------------------------------------------------------------
-table_points = src.Points_Table('points')
-table_points.drop_table()
-table_points.create_table(columns=table_points.columns)
+table_points = src.database.Points_Table("points_07")
+# table_points.drop_table()
+# table_points.create_table(columns=table_points.columns)
 
-# Copy processed NAIS data to table
-nais = src.NAIS_Download(city, year)
-for month in months:
-    nais.month = month
-    table_points.copy_data(nais.csv_processed)
-    
-table_points.drop_anomaly()
+# nais = src.clean.NAIS_Cleaner(city, year)
+# for month in months:
+#     nais.month = month
+#     table_points.copy_data(nais.csv_processed)
 
-# Main data reducing step is to eliminate large jump points
-table_points.add_index("idx_mmsi_time", "MMSI, DateTime")
-table_points.add_time_interval()
-table_points.add_index("idx_time", "TimeInterval")
-table_points.reduce_table('TimeInterval', '>=', '4 minutes')
+# table_points.add_geometry()
 
-# Recalculate time interval
-table_points.add_time_interval("idx_time")
-
-# Add POINTM
-table_points.add_geometry()
-table_points.project_column('geom', 'POINTM', 32610)
+# # Indexes (primary key MMSI, Trip, DateTime)
+# table_points.add_index("idx_mmsi", "mmsi")
+# table_points.add_index("idx_datetime", "datetime")
 # table_points.add_index("idx_geom_points", "geom", gist=True)
+# table_points.add_index("idx_track", "mmsi, trip, vesseltype")
 
-# Figure out tracks
+# table_points.add_tss("tss")
+# table_points.plot_tss()
 
 
-# Remove points that are not in_bound
-# In bounds data is no longer needed 
-# table_points.reduce_table('In_Bound', '=', '0')
-# table_points.drop_column('In_Bound')
-# # Vaccum talbe
-# table_points.vaccum_table()
+# ------------------------------------------------------------------------------
+# BUILD TSS INTERACTIONS
+# ------------------------------------------------------------------------------
+# table_tss_int = src.database.TSS_Intersection_Table("intersections_07", "points_07", "tss")
+# table_tss_int.drop_table()
+# table_tss_int.select_intersections()
+# table_tss_int.add_direction()
+# table_tss_int.get_tss_heading()
+# table_tss_int.get_entrance_angle()
+# table_tss_int.plot_angles()
 
+
+# ------------------------------------------------------------------------------
+# BUILD TRACKS TABLE
+# ------------------------------------------------------------------------------
+# table_tracks = src.database.Tracks_Table("tracks_07")
+# table_tracks.drop_table()
+# table_tracks.convert_to_tracks("points_07")
+# table_tracks.add_length()
+# table_tracks.add_index("idx_period", "period", btree=True)
+
+
+# ------------------------------------------------------------------------------
+# BUILD CPA TABLE
+# ------------------------------------------------------------------------------
+table_cpa = src.database.CPA_Table("cpa_07", "tracks_07", "shore")
+# table_cpa.drop_table()
+# table_cpa.tracks_tracks()
+# table_cpa.add_index("idx_cpa_distance", "cpa_distance")
+# # Limit to 5NM
+# table_cpa.reduce_table("cpa_distance", ">", 1852*5)
+# table_cpa.cpa_time()
+# table_cpa.cpa_points()
+# table_cpa.cpa_line()
+# table_cpa.alter_storage("cpa_line")
+# table_cpa.add_index("idx_cpa_line", "cpa_line", gist=True)
+# table_cpa.delete_shore_cross()
+# table_cpa.add_index("idx_cpa_time", "cpa_time")
+
+# ------------------------------------------------------------------------------
+# BUILD ENCOUNTERS TABLES
+# ------------------------------------------------------------------------------
+table_encounters = src.database.Encounters_Table("encounters_07", "points_07", "cpa_07")
+# table_encounters.drop_table()
+# table_encounters.cpa_points()
+# table_encounters.tcpa()
+# table_encounters.dcpa()
+# table_encounters.encounter_type()
+# table_encounters.mark_ho_passing()
+# table_encounters.give_way_info()
+# table_encounters.mark_true()
+
+# table_encounters.plot_ship_domain(hue="target ship in TSS")
+# table_encounters.plot_ship_domain(hue="target ship give way")
+
+# table_encounters.drop_sparse_encounters()
+
+
+# table_encounters.plot_alteration_dcpa()
+# table_encounters.head_on_table()
+
+# table_encounters.plot_crossings()
+# table_encounters.plot_colreg_gw_manuevers()
+# table_encounters.plot_first_move()
+# table_encounters.plot_distance_type()
+# table_encounters.plot_cpa_type()
+# table_encounters.plot_domain_encounter()
+# table = table_encounters.encounter_table()
+# print(table)
+table_encounters.plot_encounters()
+# ftests = table_encounters.hypotheses()
 
