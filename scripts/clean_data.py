@@ -16,7 +16,7 @@ import os
 import sys
 
 sys.path.append(os.path.abspath("."))
-import src
+import src.clean
 
 
 # ------------------------------------------------------------------------------
@@ -32,5 +32,5 @@ months = ["07"]
 nais = src.clean.NAIS_Cleaner(city, year)
 for month in months:
     nais.month = month
-    nais.clean_raw(overwrite=False)
+    nais.clean_raw(overwrite=True)
     nais.process(overwrite=True)

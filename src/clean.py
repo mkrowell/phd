@@ -22,7 +22,8 @@ import shutil
 import zipfile
 import yaml
 
-import src
+import src.download
+import src.dataframe
 from src import LOGGER
 
 
@@ -43,17 +44,24 @@ class NAIS_Cleaner(src.download.NAIS_Download):
         self._month = "01"
 
         # Data directories
+        self.study_area = abspath(join("data", "study_area", "ais"))
         self.cleaned = abspath(join("data", "cleaned", "ais"))
         self.processed = abspath(join("data", "processed", "ais"))
         os.makedirs(self.cleaned, exist_ok=True)
         os.makedirs(self.processed, exist_ok=True)
+        os.makedirs(self.study_area, exist_ok=True)
 
         # City associated parameters
         self.minPoints = self.parameters["minPoints"]
-        self.lonMin = self.parameters["lonMin"]
-        self.lonMax = self.parameters["lonMax"]
-        self.latMin = self.parameters["latMin"]
-        self.latMax = self.parameters["latMax"]
+        self.lonMin1 = self.parameters["lonMin1"]
+        self.lonMax1 = self.parameters["lonMax1"]
+        self.latMin1 = self.parameters["latMin1"]
+        self.latMax1 = self.parameters["latMax1"]
+        self.lonMin2 = self.parameters["lonMin2"]
+        self.lonMax2 = self.parameters["lonMax2"]
+        self.latMin2 = self.parameters["latMin2"]
+        self.latMax2 = self.parameters["latMax2"]
+
 
     @property
     def csv_cleaned(self):
@@ -76,7 +84,7 @@ class NAIS_Cleaner(src.download.NAIS_Download):
         - normalizes cog
         """
         return src.dataframe.Basic_Clean(
-            self.csv, self.minPoints, self.lonMin, self.lonMax, self.latMin, self.latMax
+            self.csv, self.minPoints, self.lonMin1, self.lonMax1, self.latMin1, self.latMax1, self.lonMin2, self.lonMax2, self.latMin2, self.latMax2
         )
 
     @property
