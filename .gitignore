@@ -82,7 +82,7 @@ target/
 reports/logs/
 
 # figures
-*.png
+# *.png
 
 # Mac OS-specific storage files
 .DS_Store
