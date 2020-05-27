@@ -1,9 +1,13 @@
 seattle:
   zone: 10
-  lonMin: -125
-  lonMax: -122
-  latMin: 47.
-  latMax: 49.5
+  lonMin1: -125
+  lonMax1: -123.5
+  latMin1: 48
+  latMax1: 48.7
+  lonMin2: -122.8
+  lonMax2: -122
+  latMin2: 47.
+  latMax2: 48.2
   minPoints: 20
   region: P
   tss: '148'
