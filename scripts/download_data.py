@@ -17,7 +17,7 @@ import sys
 import yaml
 
 sys.path.append(os.path.abspath("."))
-import src
+import src.download
 
 
 # ------------------------------------------------------------------------------
@@ -32,17 +32,27 @@ months = ["07"]
 # ------------------------------------------------------------------------------
 # Download a shapefile representation of the United States shoreline
 # and save it to the data directory.
-shore = src.Shapefile_Download("shore")
+shore = src.download.Shapefile_Download("shore")
 shore.download()
 
 # Download a shapefile representation of the US Traffic Separation Scheme
 # and save it to the data directory.
-tss = src.Shapefile_Download("tss")
+tss = src.download.Shapefile_Download("tss")
 tss.download()
+
+# Download a shapefile representation of the ferry routes
+# and save it to the data directory.
+routes = src.download.Shapefile_Download("ferry_routes")
+routes.download()
+
+# Download a shapefile representation of the ferry terminals
+# and save it to the data directory.
+terminals = src.download.Shapefile_Download("ferry_terminals")
+terminals.download()
 
 # Download raw NAIS data from MarineCadastre for the given city, year,
 # and month and save it to the data directory.
-nais = src.NAIS_Download(city, year)
+nais = src.download.NAIS_Download(city, year)
 for month in months:
     nais.month = month
     nais.download()

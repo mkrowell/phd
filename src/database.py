@@ -158,12 +158,12 @@ class Postgres_Table(Postgres_Connection):
     Base class for Postgres tables
     """
 
-    def __init__(self, table):
+    def __init__(self, table, srid=4326):
         """
         Initialize connection and set srid"""
         super(Postgres_Table, self).__init__()
         self.table = table
-        self.srid = 4326
+        self.srid = srid
 
     @time_this
     def run_query(self, query):
@@ -196,7 +196,7 @@ class Postgres_Table(Postgres_Connection):
                 of the table. Defaults to None
         """
         if filepath:
-            cmd = f'"C:\\Program Files\\PostgreSQL\\12\\bin\\shp2pgsql.exe" -s 4326 -d {filepath} {self.table} | psql -d postgres -U postgres -q'
+            cmd = f'"C:\\Program Files\\PostgreSQL\\12\\bin\\shp2pgsql.exe" -s {self.srid} -d {filepath} {self.table} | psql -d postgres -U postgres -q'
             LOGGER.info(f"Constructing {self.table} from {filepath}...")
             subprocess.call(cmd, shell=True)
         elif columns:
@@ -523,6 +523,27 @@ class Points_Table(Postgres_Table):
         plt.close()
         del df
 
+    def add_terminal(self, terminals):
+        """Add nearby ferry terminal"""
+        name = "terminal"
+        self.add_column(name, datatype='text')
+        sql = f"""
+            WITH temp AS (
+                SELECT points.geom AS point_geom, ports.display
+                FROM {self.table} AS points
+                RIGHT JOIN {terminals} AS ports
+                ON ST_DWithin(ports.geom, points.geom, 750)
+            )
+
+            UPDATE 
+                {self.table}
+            SET 
+                {name} = temp.display
+            FROM temp
+            WHERE {self.table}.geom=temp.point_geom
+        """
+        self.run_query(sql)
+
 
 class TSS_Intersection_Table(Postgres_Table):
 
@@ -671,7 +692,8 @@ class Tracks_Table(Postgres_Table):
                 MMSI,
                 Trip,
                 VesselType,
-                max(DateTime) - min(DateTime) AS duration,
+                min(DateTime) AS start_time,
+                max(DateTime) AS end_time,
                 tstzrange(min(DateTime), max(DateTime)) AS period,
                 ST_MakeLine(geom ORDER BY DateTime) AS track
             FROM {points}
@@ -688,6 +710,28 @@ class Tracks_Table(Postgres_Table):
             SET length = ST_Length(track)
         """
         self.run_query(sql)
+
+    def add_od(self, points):
+        origin = "origin"
+        self.add_column(origin, datatype="text")
+        dest = "destination"
+        self.add_column(dest, datatype="text")
+        sql = f"""
+            UPDATE {self.table}
+            SET  {origin} = {points}.terminal
+            FROM {points}
+            WHERE {self.table}.start_time = {points}.datetime
+        """
+        self.run_query(sql)
+
+        sql = f"""
+            UPDATE {self.table}
+            SET  {dest} = {points}.terminal
+            FROM {points}
+            WHERE {self.table}.end_time = {points}.datetime
+        """
+        self.run_query(sql)
+
 
 
 class CPA_Table(Postgres_Table):
@@ -780,6 +824,55 @@ class CPA_Table(Postgres_Table):
             DELETE FROM {self.table} c
             USING {self.shore} s
             WHERE ST_Intersects(c.cpa_line, s.geom)
+        """
+        self.run_query(sql)
+
+
+class Unimpeded_Table(Postgres_Table):
+
+    """
+    Tracks that are not in an encounter
+    """
+
+    def __init__(self, table, input_tracks, input_cpa):
+        """
+        Connect to default database.
+        
+        Args:
+            table (string): Name of table
+            input_table (string): Name of tracks table
+        """
+        super(Unimpeded_Table, self).__init__(table)
+        self.cur = self.conn.cursor()
+        self.tracks = input_tracks
+        self.cpas = input_cpa
+        
+    def select_non_encounters(self):
+
+        # sql = f"""
+        #     CREATE TABLE {self.table} AS
+        #     SELECT  l.*
+        #     FROM    {self.tracks} l
+        #     WHERE   NOT EXISTS
+        #         (
+        #         SELECT  NULL
+        #         FROM    {self.cpas} r
+        #         WHERE   r.mmsi_1 = l.mmsi
+        #         AND     r.trip_1 = l.trip
+        #         )
+        # """
+        sql = f"""
+            CREATE TABLE {self.table} AS
+            SELECT  l.*
+            FROM    {self.tracks} l
+            WHERE NOT EXISTS
+                (
+                SELECT  NULL
+                FROM    {self.cpas} r
+                WHERE   r.cpa_distance < 3*1852
+                AND     r.mmsi_1 = l.mmsi
+                AND     r.trip_1 = l.trip
+                )
         """
         self.run_query(sql)
 
@@ -879,6 +972,25 @@ class Encounters_Table(Postgres_Table):
                 ON p2.mmsi = c.mmsi_2
                 AND p2.trip = c.trip_2
                 AND p2.datetime = p.datetime
+        """
+        self.run_query(sql)
+
+    def mark_turning_spot(self):
+        col = "turning_spot"
+        self.add_column(col, datatype="integer")
+        sql = f"""
+        WITH bucket AS (
+            SELECT lat_2, lon_2, alteration_degrees_2, ST_ClusterDBSCAN(point_2, eps := 463, minpoints := 2) over () AS cid
+            FROM {self.table}
+            WHERE {self.table}.alteration_degrees_2 > 10
+        )
+
+        UPDATE {self.table}
+        SET {col} = bucket.cid
+        FROM bucket
+        WHERE {self.table}.lat_2 = bucket.lat_2
+        AND {self.table}.lon_2 = bucket.lon_2
+        AND {self.table}.alteration_degrees_2 = bucket.alteration_degrees_2
         """
         self.run_query(sql)
 
@@ -1039,18 +1151,7 @@ class Encounters_Table(Postgres_Table):
         """
         self.cur.execute(sql.format(self.table, name1, "point_1", "cpa_point_1"))
         self.cur.execute(sql.format(self.table, name2, "point_2", "cpa_point_2"))
-        self.conn.commit()
-
-    def mark_turning_cirlce(self):
-        col = "turning_circle"
-        self.add_column(col, datatype="boolean", default=False)
-        sql = f"""
-            UPDATE {self.table}
-            SET {col} = TRUE
-            WHERE gid_1 IN (61, 62, 64, 65, 66, 67, 68)
-            OR gid_2 IN (61, 62, 64, 65, 66, 67, 68)
-        """
-        self.run_query(sql)
+        self.conn.commit()        
 
     def mark_true(self):
         """Mark encounters that are just nearby and not really encounter"""
@@ -1127,7 +1228,7 @@ class Encounters_Table(Postgres_Table):
             (self.df['give_way_1'] == 1) & 
             (self.df['give_way_2'] == 0)
         ]
-        df = df[df["encounter"] != 'none']
+        df = df[(df["encounter"] != 'none') & (df['nearby_only'] == False)]
         if encounter:
             df = df[df['encounter'] == encounter] 
         if tss in [0,1]:
@@ -1155,7 +1256,7 @@ class Encounters_Table(Postgres_Table):
             (self.df['give_way_1'] == 1) & 
             (self.df['give_way_2'] == 0) 
         ]
-        df = df[df["encounter"] != 'none']
+        df = df[(df["encounter"] != 'none') & (df['nearby_only'] == False)]
         if encounter:
             df = df[df['encounter'] == encounter] 
         if tss in [0,1]:
@@ -1184,7 +1285,7 @@ class Encounters_Table(Postgres_Table):
             (self.df['give_way_2'] == 1) &
             (self.df['encounter'] == "head-on")
         ] 
-        df = df[df["encounter"] != 'none']
+        df = df[(df["encounter"] != 'none') & (df['nearby_only'] == False)]
         if tss in [0,1]:
             df = df[
                 (df['ownship in TSS'] == tss) &
@@ -1204,14 +1305,14 @@ class Encounters_Table(Postgres_Table):
             }
         )
 
-    def _df_ship_2(self, tss, vtype=None):
+    def _df_ship_2(self, tss=None, vtype=None):
         """Return ship 1 and ship 2 dataframe"""
         df = self.df[
             (self.df['give_way_1'] == 1) & 
             (self.df['give_way_2'] == 1) &
             (self.df['encounter'] == "head-on")
         ]
-        df = df[df["encounter"] != 'none']
+        df = df[(df["encounter"] != 'none') & (df['nearby_only'] == False)]
         if tss in [0,1]:
             df = df[
                 (df['ownship in TSS'] == tss) &
@@ -1230,6 +1331,14 @@ class Encounters_Table(Postgres_Table):
                 "tcpa": "TCPA"
             }
         )
+
+    @property
+    def df_no_so_maneuver(self):
+        """Return a df where the so vessel does not maneuver"""
+        alt_limit = 10
+        stand_on = self._df_stand_on()
+        return stand_on[abs(stand_on["alteration_degrees_1"]) < alt_limit]
+    
 
     # PLOTS
     @time_this
@@ -1358,54 +1467,170 @@ class Encounters_Table(Postgres_Table):
             temp = list(name)
             output_name = " - ".join([str(e) for e in temp])
             encounter = group["encounter"].iloc[0]
+            if group["give_way_1"].iloc[0] == 1 and group["give_way_2"].iloc[0] == 0:
+                ship_1_label = f"Give Way Ship - {group['ownship'].iloc[0]}"
+                ship_2_label = f"Stand On Ship - {group['target ship'].iloc[0]}"
+            if group["give_way_1"].iloc[0] == 0 and group["give_way_2"].iloc[0] == 1:
+                ship_1_label = f"Stand On Ship - {group['ownship'].iloc[0]}"
+                ship_2_label = f"Give Way Ship - {group['target ship'].iloc[0]}"
+            if group["give_way_1"].iloc[0] == 1 and group["give_way_2"].iloc[0] == 1:
+                ship_1_label = f"Ship 1 - {group['ownship'].iloc[0]}"
+                ship_2_label = f"Ship 2 - {group['target ship'].iloc[0]}"
 
             fig, (ax1, ax2, ax3, ax4, ax5) = plt.subplots(5, sharex=True, figsize=(7,10))
             fig.suptitle(f'Track Comparison {encounter.title()} \nMMSI {name[0]} Trip {name[1]} \nand \nMMSI {name[2]} Trip {name[3]}', fontsize=12, fontweight='bold', x=0.54, y=0.99)
             plt.subplots_adjust(left=None, bottom=None, right=None, top=0.9, wspace=0, hspace=0.3)
   
             ax1.set_title('LAT')
-            sns.lineplot(x='tcpa', y='lat_1', data=group, color='blue', ax=ax1, label="Ship 1", legend=False)
-            sns.lineplot(x='tcpa', y='lat_2', data=group, color='red', dashes=True, ax=ax1, label="Ship 2", legend=False)
+            sns.lineplot(x='tcpa', y='lat_1', data=group, color='blue', ax=ax1, label=ship_1_label, legend=False)
+            sns.lineplot(x='tcpa', y='lat_2', data=group, color='red', dashes=True, ax=ax1, label=ship_2_label, legend=False)
             
             ax2.set_title('LON')
-            sns.lineplot(x='tcpa', y='lon_1', data=group, color='blue',ax=ax2, label="Ship 1", legend=False)
-            sns.lineplot(x='tcpa', y='lon_2', data=group, color='red', dashes=True, ax=ax2, label="Ship 2", legend=False)
+            sns.lineplot(x='tcpa', y='lon_1', data=group, color='blue',ax=ax2, label=ship_1_label, legend=False)
+            sns.lineplot(x='tcpa', y='lon_2', data=group, color='red', dashes=True, ax=ax2, label=ship_2_label, legend=False)
 
-            ax3.set_title('SOG')
-            sns.lineplot(x='tcpa', y='sog_1', data=group, color='blue', ax=ax3, label="Ship 1", legend=False)
-            sns.lineplot(x='tcpa', y='sog_2', data=group, color='red', dashes=True, ax=ax3, label="Ship 2", legend=False)
+            ax3.set_title('Acceleration')
+            sns.lineplot(x='tcpa', y='acceleration_1', data=group, color='blue', ax=ax3, label=ship_1_label, legend=False)
+            sns.lineplot(x='tcpa', y='acceleration_2', data=group, color='red', dashes=True, ax=ax3, label=ship_2_label, legend=False)
+
+            ax4.set_title("Change in Heading")
+            sns.lineplot(x='tcpa', y='alteration_degrees_1', data=group, color="blue", ax=ax4, label=ship_1_label, legend=False)
+            sns.lineplot(x='tcpa', y='alteration_degrees_2', data=group, color="red", dashes=True, ax=ax4, label=ship_2_label, legend=False)
             
-            ax4.set_title("Heading")
-            sns.lineplot(x='tcpa', y='heading_1', data=group, color="blue", ax=ax4, label="Ship 1", legend=False)
-            sns.lineplot(x='tcpa', y='heading_2', data=group, color="red", dashes=True, ax=ax4, label="Ship 2", legend=False)
+            ax5.set_title("Distance between Ships")
+            sns.lineplot(x='tcpa', y='distance_12', data=group, color="blue", ax=ax5, legend=False)
             
-            ax5.set_title("Change in Heading")
-            sns.lineplot(x='tcpa', y='alteration_degrees_1', data=group, color="blue", ax=ax5, label="Ship 1", legend=False)
-            sns.lineplot(x='tcpa', y='alteration_degrees_2', data=group, color="red", dashes=True, ax=ax5, label="Ship 2", legend=False)
+            
 
             for ax in fig.get_axes():
                 ax.label_outer()
                 ax.set_xlabel("TCPA")
-            labels = ["LAT", "LON", "SOG", "Heading", "Change in Heading"]
+            labels = ["LAT", "LON", "Meters/Second_squared", "Degrees", "Meters"]
             for label, ax in zip(labels, fig.get_axes()):
                 ax.label_outer()
                 ax.set_ylabel(label)
 
-            handles, labels = ax.get_legend_handles_labels()
+            handles, labels = ax1.get_legend_handles_labels()
             fig.legend(handles, labels, loc='upper right')
-            save_plot(join(PLOTS_DIR, 'encounters', output_name + ".png"), tight=True)
+            save_plot(join(PLOTS_DIR, 'non-encounters', output_name + ".png"), tight=True)
 
-    @property
-    def df_no_so_maneuver(self):
-        """Return a df where the so vessel does not maneuver but gw does"""
-        so_limit = 15
-        gw_limit = 15
-        stand_on = self.df[(self.df['give_way_1'] == 0)]
-        gw =  stand_on[abs(stand_on["alteration_2"]) >= gw_limit]
-        return gw[abs(gw["alteration_1"]) < so_limit]
-      
+    @time_this
+    def plot_alterations(self):
+        """Plot heading and sog alterations of true encounters"""
+
+        # plot alteration of give way
+        give_way = self._df_give_way()
+        stand_on = self._df_stand_on()
+        ship_1 = self._df_ship_1()
+        ship_2 = self._df_ship_2()
+        ship_1["Type"] = "Give Way"
+        ship_2["Type"] = "Give Way"      
+
+         # ACCELERATION
+        fig, ax = plt.subplots(figsize=(10,10))
+        group = pd.concat([give_way, stand_on])
+        group = group[group["cpa_distance"]< .25*1852]
+        sns.boxplot(y="acceleration", x="Type", hue="ownship", data=group,linewidth=0.5)      #,showfliers=False
+        plt.legend()
+        save_plot(join(PLOTS_DIR, f"Encounter Acceleration by Responsibility and Type (No Head-On)"), tight=True)
+        plt.close()
+
+        df = pd.concat([give_way, stand_on, ship_1, ship_2])
+        fig, ax = plt.subplots()
+        sns.distplot(df["acceleration"], kde=False)
+        ax.set_ylabel("Number of Data Points")
+        ax.set_xlabel("Acceleration (meters/second^2)")
+        plt.xlim(-0.2, 0.2)
+        save_plot(join(PLOTS_DIR, f"Encouter Acceleration"), tight=True)
+        plt.close()
+
+        fig, ax = plt.subplots()
+        sns.distplot(df["alteration"], kde=False)
+        ax.set_ylabel("Number of Data Points")
+        ax.set_xlabel("Alteration (Degrees)")
+        plt.xlim(-180, 180)
+        save_plot(join(PLOTS_DIR, f"Encouter Alteration"), tight=True)
+        plt.close()
+
+        fig, ax = plt.subplots()
+        gw = pd.concat([give_way, ship_1, ship_2])
+        sns.distplot(stand_on["alteration"], label="Stand On", kde=False)
+        sns.distplot(gw["alteration"], label="Give Way", kde=False)
+        plt.legend()
+        ax.set_ylabel("Number of Encounters")
+        ax.set_xlabel("Alteration (Degrees)")
+        save_plot(join(PLOTS_DIR, f"Encounter Alteration by Responsibility"), tight=True)
+        plt.close()
+
+        # BY CPA 
+        # TODO: add distance titles
+        fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, sharex=True, sharey=True, figsize=(10,10))
+        group = pd.concat([give_way, stand_on])
+        bins = np.linspace(group.alteration.min(), group.alteration.max(), 60)
+        sns.distplot(stand_on[stand_on["cpa_distance"]< 1*1852]["alteration"], label="Stand On", kde=True, hist=False, bins=bins, ax=ax1)
+        sns.distplot(give_way[give_way["cpa_distance"]< 1*1852]["alteration"], label="Give Way", kde=True, hist=False,bins=bins, ax=ax1)
+
+        sns.distplot(stand_on[stand_on["cpa_distance"]< 0.5*1852]["alteration"], label="Stand On", kde=True, hist=False,bins=bins, ax=ax2)
+        sns.distplot(give_way[give_way["cpa_distance"]< 0.5*1852]["alteration"], label="Give Way", kde=True, hist=False,bins=bins, ax=ax2)
+
+        sns.distplot(stand_on[stand_on["cpa_distance"]< 0.25*1852]["alteration"], label="Stand On", kde=True, hist=False,bins=bins, ax=ax3)
+        sns.distplot(give_way[give_way["cpa_distance"]< 0.25*1852]["alteration"], label="Give Way", kde=True, hist=False,bins=bins, ax=ax3)
+
+        sns.distplot(stand_on[stand_on["cpa_distance"]< 0.1*1852]["alteration"], label="Stand On", kde=True, hist=False,bins=bins, ax=ax4)
+        sns.distplot(give_way[give_way["cpa_distance"]< 0.1*1852]["alteration"], label="Give Way", kde=True, hist=False,bins=bins, ax=ax4)
+        
+        plt.legend()
+        ax.set_ylabel("Number of Encounters")
+        ax.set_xlabel("Alteration (Degrees)")
+        save_plot(join(PLOTS_DIR, f"Encounter Alteration by Responsibility (No Head-On)"), tight=True)
+        plt.close()
+
+        # BY VESSEL TYPE
+        # fig, axs = plt.subplots()
+        # group = pd.concat([give_way, stand_on])
+        # bins = np.linspace(group.alteration.min(), group.alteration.max(), 60)
+        # give_way = self._df_give_way(vtype="ferry")
+        # stand_on = self._df_stand_on(vtype="cargo")
+        # sns.boxplot(stand_on[stand_on["cpa_distance"]< 2*1852]["alteration"], label="Stand On Cargo", kde=True, hist=False, ax=ax1)
+        # sns.boxplot(give_way[give_way["cpa_distance"]< 2*1852]["alteration"], label="Give Way Ferry", kde=True, hist=False, ax=ax1)
+
+        # give_way = self._df_give_way(vtype="cargo")
+        # stand_on = self._df_stand_on(vtype="ferry")
+        # sns.boxplot(stand_on[stand_on["cpa_distance"]< 2*1852]["alteration"], label="Stand On Ferry", kde=True, hist=False, ax=ax2)
+        # sns.boxplot(give_way[give_way["cpa_distance"]< 2*1852]["alteration"], label="Give Way Cargo", kde=True, hist=False, ax=ax2)
+
+        # plt.legend()
+        # ax.set_ylabel("Number of Encounters")
+        # ax.set_xlabel("Alteration (Degrees)")
+        # save_plot(join(PLOTS_DIR, f"Encounter Alteration by Responsibility and Type (No Head-On)"), tight=True)
+        # plt.close()
+
+       
+
+
+
+
+    
     def plot_colreg_gw_manuevers(self):
         """Plot alteration of gw vessels when so doesnt maneuver"""
+
+        df = self.df_no_so_maneuver()
+        dft = df[df['TCPA']<1]
+        sns.scatterplot(x=dft.alteration, y=dft.distance_12, hue=dft.TCPA)
+        ax.set_ylabel("Distance between Ships (m)")
+        ax.set_xlabel("Alteration (degrees)")
+        ax.set_title(f"Alterations of Give Way Vessels in COLREGS-compliant Encounters v Distance")
+        save_plot(join(PLOTS_DIR, f"Alterations of Give Way Vessels in COLREGS-compliant Encounters v Distance.png"), tight=False)
+        plt.close()
+
+        dft0 = dft[(dft['alteration']>10) | (dft['alteration']<-10)]
+        sns.scatterplot(x=dft.lon_2, y=dft.lat_2, hue=dft.alteration, size=dft.alteration)
+        ax.set_ylabel("Latitude")
+        ax.set_xlabel("Longitude")
+        ax.set_title(f"Location of Alterations of Give Way Vessels in COLREGS-compliant Encounters")
+        save_plot(join(PLOTS_DIR, f"Location of Alterations of Give Way Vessels in COLREGS-compliant Encounters.png"), tight=False)
+        plt.close()
+
         # fig, ax = plt.subplots()
         # sns.distplot(self.df_no_so_maneuver["alteration_degrees_2"], kde=False)
         # ax.set_ylabel("Number of Encounters")
@@ -1543,9 +1768,7 @@ class Encounters_Table(Postgres_Table):
         y = dummies['distance_12']
 
         X = sm.add_constant(X)
-        model = sm.OLS(y, X).fit(cov_type='cluster', cov_kwds={'groups': dummies['group']})
-        LOGGER.info(print(model))
-        return model
+        return sm.OLS(y, X).fit(cov_type='cluster', cov_kwds={'groups': dummies['group']})
 
     def hypotheses(self):
         """Significance of 'features' of encounters have associations with distance"""
@@ -1708,64 +1931,6 @@ class Encounters_Table(Postgres_Table):
     
 
 
-
-
-# class Crossing_Table(Postgres_Table):
-#     def __init__(self, conn, table, input_analysis):
-#         """Connect to default database."""
-#         super(Crossing_Table, self).__init__(conn, table)
-#         self.cur = self.conn.cursor()
-#         self.input = input_analysis
-#         self.colregs = "{0}_colregs".format(self.table)
-#         self.others = "{0}_others".format(self.table)
-
-
-
-#     def separate_colregs(self):
-#         """Create table of colregs compliant interactions."""
-#         LOGGER.info("Selecting colreg compliant interactions...")
-#         sql_colregs = """
-#             CREATE TABLE {0} AS
-#             SELECT *
-#             FROM {1}
-#             WHERE avg_cog_cos >= 0.999
-#             AND avg_accel <= abs(10)
-#         """.format(
-#             self.colregs, self.table
-#         )
-#         self.cur.execute(sql_colregs)
-#         self.conn.commit()
-
-#         LOGGER.info("Selecting colreg compliant interactions...")
-#         sql_others = """
-#             CREATE TABLE {0} AS
-#             SELECT *
-#             FROM {1}
-#             WHERE avg_cog_cos < 0.999
-#             AND avg_accel > abs(10)
-#         """.format(
-#             self.others, self.table
-#         )
-#         self.cur.execute(sql_others)
-#         self.conn.commit()
-
-
-
-
-
-#
-
- 
-
-# plot every encounter cog v time, sog v time, step_cog v tcpa
-#
-# fig = plt.figure()
-# ax = fig.add_subplot(111, projection='polar')
-# ax.set_rlabel_position(135)
-# ax.set_theta_zero_location('N')
-# ax.set_theta_direction(-1)
-# c = ax.scatter(np.radians(overtaking['bearing12']), overtaking['distance'], c=np.radians(overtaking['bearing12']), cmap='hsv', alpha=0.75)
-# #
 # self.window_mmsi = '(PARTITION BY MMSI, Trip ORDER BY DateTime ASC)'
 
 #     def window_column(self, name, window_query):
@@ -1793,5 +1958,5 @@ class Encounters_Table(Postgres_Table):
 #                 temp.DateTime = {self.table}.DateTime
 #         """
 #         return sql
-#  class Encounter_Table(Postgres_Table):
+
 
