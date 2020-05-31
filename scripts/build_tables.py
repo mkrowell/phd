@@ -57,7 +57,7 @@ table_shore.reduce_table("regions", "!=", parameters["region"])
 # BUILD TSS TABLE
 # ------------------------------------------------------------------------------
 # Create a Postgres table from the tss shapefile"
-shapefile_tss = src.Shapefile_Download("tss").output
+shapefile_tss = src.download.Shapefile_Download("tss").output
 table_tss = src.database.Postgres_Table("tss")
 table_tss.create_table(filepath=shapefile_tss)
 
@@ -184,10 +184,10 @@ ftests = table_encounters.hypotheses()
 # ------------------------------------------------------------------------------
 # BUILD TSS INTERACTIONS
 # ------------------------------------------------------------------------------
-table_tss_int = src.database.TSS_Intersection_Table("intersections_07", "points_07", "tss")
-table_tss_int.drop_table()
-table_tss_int.select_intersections()
-table_tss_int.add_direction()
-table_tss_int.get_tss_heading()
-table_tss_int.get_entrance_angle()
-table_tss_int.plot_angles()
+# table_tss_int = src.database.TSS_Intersection_Table("intersections_07", "points_07", "tss")
+# table_tss_int.drop_table()
+# table_tss_int.select_intersections()
+# table_tss_int.add_direction()
+# table_tss_int.get_tss_heading()
+# table_tss_int.get_entrance_angle()
+# table_tss_int.plot_angles()
