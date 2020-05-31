@@ -6,3 +6,11 @@ tss:
   root: data\\raw\\tss
   url: http://encdirect.noaa.gov/theme_layers/data/shipping_lanes/shippinglanes.zip
   output: shippinglanes.shp
+ferry_routes:
+  root: data\\raw\\ferry_routes
+  url: https://www.wsdot.wa.gov/mapsdata/geodatacatalog/Maps/noscale/DOT_Cartog/ferry.zip
+  output: FerryRoutes.shp
+ferry_terminals:
+  root: data\\raw\\ferry_terminals
+  url: https://www.wsdot.wa.gov/mapsdata/geodatacatalog/Maps/noscale/DOT_Cartog/ferrytermspubpriv.zip
+  output: Ferries\\ferrytermpubpriv.shp
