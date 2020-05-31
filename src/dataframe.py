@@ -52,6 +52,7 @@ def azimuth_utm(point1, point2):
     north = point2.y - point1.y
     return np.degrees(np.arctan2(east, north))
 
+
 def angle_difference(angle1, angle2):
     """Return the signed difference between two angles in radians"""
     angle1 = np.radians(angle1)
@@ -66,13 +67,15 @@ def angle_difference(angle1, angle2):
 # ------------------------------------------------------------------------------
 @contextmanager
 def plot(filepath, tight=True):
+    """Context manager for opening, saving, and closing figure"""
     fig, ax = plt.subplots()
     yield ax
     save_plot(filepath, tight)
     plt.close(fig)
 
+
 def save_plot(filepath, tight):
-    """Save and close figure"""
+    """Save figure"""
     if exists(filepath):
         os.remove(filepath)
     if tight:
@@ -80,12 +83,18 @@ def save_plot(filepath, tight):
         plt.subplots_adjust(top=0.9, bottom=0.2)
     plt.savefig(filepath)
 
+
 def plot_type(df, prepend, destination):
     """Create a chart of the number of unique vessels per type"""
     with plot(join(destination, f"{prepend}_Type")) as ax:
-        unique = df[["MMSI", "VesselType", "Missing_Heading"]].drop_duplicates(keep="first")
-        sns.countplot("VesselType", data=unique, hue="Missing_Heading")  #palette="Paired", 
+        unique = df[["MMSI", "VesselType", "Missing_Heading"]].drop_duplicates(
+            keep="first"
+        )
+        sns.countplot(
+            "VesselType", data=unique, hue="Missing_Heading"
+        )  # palette="Paired",
         ax.set_ylabel("Number of Unique MMSI")
+
 
 def plot_sog(df, prepend, destination):
     """Create a chart of SOGs observed"""
@@ -98,6 +107,7 @@ def plot_sog(df, prepend, destination):
         else:
             plt.xlim(0, 50)
 
+
 def plot_acceleration(df, destination):
     """Create a chart of acceleration observed"""
     with plot(join(destination, f"Acceleration")) as ax:
@@ -106,6 +116,7 @@ def plot_acceleration(df, destination):
         ax.set_xlabel("Acceleration (meters/second^2)")
         plt.xlim(-0.2, 0.2)
 
+
 def plot_alteration(df, destination):
     """Create a chart of alteration observed"""
     with plot(join(destination, f"Alteration_Degrees")) as ax:
@@ -113,6 +124,7 @@ def plot_alteration(df, destination):
         ax.set_ylabel("Number of Data Points")
         ax.set_xlabel("Alteration (Degrees)")
         plt.xlim(-180, 180)
+
 
 def plot_trip_length(df, destination):
     """Create a chart of trip length observed"""
@@ -129,14 +141,18 @@ def plot_trip_length(df, destination):
         ax.set_ylabel("Number of Trips")
         ax.set_xlabel("Trip Length (m)")
         plt.legend()
-  
+
+
 def plot_step_length(df, prepend, destination):
     """Create a chart of step length observed"""
     with plot(join(destination, f"{prepend}_Step_Length")) as ax:
         df["Step_Distance"].fillna(0, inplace=True)
-        sns.distplot(60 * df["Step_Distance"] / df["Interval"], kde=False).set_title("Step Length")
+        sns.distplot(60 * df["Step_Distance"] / df["Interval"], kde=False).set_title(
+            "Step Length"
+        )
         ax.set_ylabel("Number of Steps")
         ax.set_xlabel("Length (m)")
+
 
 def plot_latlon(df, destination):
     """create a distribution of lat/lon"""
@@ -144,6 +160,7 @@ def plot_latlon(df, destination):
         sns.jointplot(x="LON", y="LAT", data=df, kind="kde").set_title(
             "Spatial Distribution"
         )
+
 
 def plot_cog(df, prepend, destination):
     """Create a chart of COGs observed by type"""
@@ -175,13 +192,25 @@ class Basic_Clean(object):
     Clean NAIS data
     """
 
-    def __init__(self, csvFile, minPoints, lonMin1, lonMax1, latMin1, latMax1, lonMin2, lonMax2, latMin2, latMax2):
+    def __init__(
+        self,
+        csvFile,
+        minPoints,
+        lonMin1,
+        lonMax1,
+        latMin1,
+        latMax1,
+        lonMin2,
+        lonMax2,
+        latMin2,
+        latMax2,
+    ):
         """Initialize attributes and dataframe."""
         self.csv = csvFile
         self.csv_study_area = self.csv.replace("raw", "study_area")
         self.cleaned = self.csv.replace("raw", "cleaned")
         self.month = int(self.csv.split("_")[-2])
-        self.plot_dir =  abspath(join("reports", "figures", str(self.month)))
+        self.plot_dir = abspath(join("reports", "figures", str(self.month)))
         os.makedirs(self.plot_dir, exist_ok=True)
 
         # Spatial parameters
@@ -196,7 +225,6 @@ class Basic_Clean(object):
         self.latMin2 = latMin2
         self.latMax2 = latMax2
 
-        
         # Create raw NAIS dataframe
         self.required = ["MMSI", "BaseDateTime", "LAT", "LON", "SOG", "COG", "Heading"]
         if exists(self.csv_study_area):
@@ -217,13 +245,13 @@ class Basic_Clean(object):
 
             # save to study area
             self.df.to_csv(self.csv_study_area, index=False, header=True)
-        
+
         self.df["BaseDateTime"] = pd.to_datetime(self.df["BaseDateTime"])
         self.df.sort_values("MMSI", inplace=True)
 
         # Save raw df for plotting purposes - use for traffic as well
         self.df_raw = self.df.copy()
-        
+
     # MAIN FUNCTIONS
     @print_reduction
     def clean_raw(self):
@@ -243,26 +271,26 @@ class Basic_Clean(object):
         self._filter_time(3)
 
         self._drop_sparse_mmsi()
-        
+
         self._filter_status()
         self._filter_type()
-        
+
         self._plot()
 
         self.df.sort_values(["MMSI", "BaseDateTime"], inplace=True)
         self.df.to_csv(self.cleaned, index=False, header=True)
-        
+
     # DATAFRAME CLEANING
     def _select_spatial(self):
         """Limit data to bounding box of interest."""
         self.df = self.df[
             (
-                (self.df["LON"].between(self.lonMin1, self.lonMax1)) &
-                (self.df["LAT"].between(self.latMin1, self.latMax1))
-            ) |
-            (
-                (self.df["LON"].between(self.lonMin2, self.lonMax2)) &
-                (self.df["LAT"].between(self.latMin2, self.latMax2))
+                (self.df["LON"].between(self.lonMin1, self.lonMax1))
+                & (self.df["LAT"].between(self.latMin1, self.latMax1))
+            )
+            | (
+                (self.df["LON"].between(self.lonMin2, self.lonMax2))
+                & (self.df["LAT"].between(self.latMin2, self.latMax2))
             )
         ].copy()
 
@@ -407,7 +435,7 @@ class Processor(object):
         self.csv_processed = self.csv.replace("cleaned", "processed")
         self.month = int(month)
         self.minPoints = minPoints
-        self.plot_dir =  abspath(join("reports", "figures", str(self.month)))
+        self.plot_dir = abspath(join("reports", "figures", str(self.month)))
 
         # Create raw NAIS dataframe
         self.df = pd.read_csv(self.csv)
@@ -459,7 +487,7 @@ class Processor(object):
         self._plot()
         self._log_quantiles()
         self._write_output()
-        
+
     def _plot(self):
         """Plot data before and after its been cleaned"""
         plot_acceleration(self.gdf, self.plot_dir)
@@ -469,10 +497,11 @@ class Processor(object):
         plot_step_length(self.gdf, "Processed", self.plot_dir)
 
     def _log_quantiles(self):
-        accel = self.gdf['Acceleration'].quantile(np.linspace(.05, 1, 9, 0), 'lower')
-        alter = self.gdf['Alteration_Degrees'].quantile(np.linspace(.05, 1, 9, 0), 'lower')
+        accel = self.gdf["Acceleration"].quantile(np.linspace(0.05, 1, 9, 0), "lower")
+        alter = self.gdf["Alteration_Degrees"].quantile(
+            np.linspace(0.05, 1, 9, 0), "lower"
+        )
         LOGGER.info(f"Quantiles: {accel}, {alter}")
-
 
 
     # PREPROCESSING ------------------------------------------------------------
@@ -525,6 +554,7 @@ class Processor(object):
 
     def _step_cog(self):
         """Calculate the course between two position points"""
+
         def course_utm(df):
             df.reset_index(inplace=True)
             df["Step_Azimuth"] = azimuth_utm(
@@ -550,7 +580,9 @@ class Processor(object):
     def _acceleration(self):
         """Add acceleration."""
         self.gdf["DS"] = self.grouped_trip["SOG"].diff()
-        self.gdf["Acceleration"] = self.gdf["DS"].divide(self.df["Interval"], fill_value=0)*(METERS_IN_NM/3600)
+        self.gdf["Acceleration"] = self.gdf["DS"].divide(
+            self.df["Interval"], fill_value=0
+        ) * (METERS_IN_NM / 3600)
         self.gdf.drop(columns=["DS"], inplace=True)
         self.gdf["Acceleration"].fillna(method="bfill", inplace=True)
 
@@ -612,4 +644,3 @@ class Processor(object):
         self.gdf.reindex(columns)
         self.gdf.sort_values(["MMSI", "Trip", "DateTime"], inplace=True)
         self.gdf.to_csv(self.csv_processed, index=False, header=False)
-
