@@ -39,8 +39,8 @@ with open(parameters_file, "r") as stream:
 # BUILD SHORELINE TABLE
 # ------------------------------------------------------------------------------
 # Create a Postgres table from the shoreline shapefile
-shapefile_shore = src.database.Shapefile_Download("shore").output
-table_shore = src.Postgres_Table("shore")
+shapefile_shore = src.download.Shapefile_Download("shore").output
+table_shore = src.database.Postgres_Table("shore")
 table_shore.create_table(filepath=shapefile_shore)
 
 # Transform to UTM 10 SRID
