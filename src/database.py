@@ -40,7 +40,7 @@ warnings.filterwarnings("ignore")
 PLOTS_DIR = abspath(join(dirname(__file__), "..", "reports", "figures", "7"))
 sns.set_palette("Set1")
 # sns.set_context("paper") 
-sns.set(font_scale=1.25)  
+# sns.set(font_scale=1.25)  
 
 
 
@@ -1338,6 +1338,7 @@ class Encounters_Table(Postgres_Table):
         """Plot length when encountering a ferry versus non-ferry"""
         df = self.df[(self.df['ownship'] == 'ferry')]
         df = df[df['nearby_only'] == False]
+        df = df[df['cpa_distance'] < 2*1852]
         df = df[((df['origin_1']=="Bainbridge Island") & (df['destination_1']=="Seattle Pier 50")) | ((df['origin_1']=="Seattle Pier 50") & (df['destination_1']=="Bainbridge Island"))]
         # df = df[(df['origin_1'].isin(["Bremerton", "Seattle Pier 50"])) & (df['destination_1'].isin(["Bremerton", "Seattle Pier 50"]))]
         df['duration_1'] = df['duration_1']/ np.timedelta64(1, 'm')
@@ -1402,7 +1403,7 @@ class Encounters_Table(Postgres_Table):
     @time_this
     def plot_ship_domain(self, hue):
         """Plot CPA ship domain"""
-        df = self.df
+        df = self.df[self.df['distance_12']<2*1852]
         # df = df[(df['ownship'] != 'tanker') | df['target ship'] != 'tanker']
         df["target ship in TSS"] = df["target ship in TSS"].astype(int)
         df.rename(
@@ -1787,7 +1788,6 @@ class Encounters_Table(Postgres_Table):
                 "target ship in TSS": "tss_2"
             }, inplace=True
         )
-        df = df[df['tcpa'] == 0]
 
         df['tss_both'] = df['tss_1']*df['tss_2']
         dummies = pd.get_dummies(data=df, columns=['type_1', 'type_2', 'tss_1', 'tss_2', 'tss_both'])
@@ -1868,7 +1868,7 @@ class Encounters_Table(Postgres_Table):
         df = self.df
         df.drop_duplicates(subset=["cpa_distance", "cpa_time", "encounter"], inplace=True)
         df['CPA Distance'] = df['cpa_distance']/1852
-        df = df[df['encounter'] == 'head-on']
+        # df = df[df['encounter'] == 'head-on']
        
         g = sns.FacetGrid(
             df,
