@@ -39,7 +39,7 @@ with open(parameters_file, "r") as stream:
 # BUILD SHORELINE TABLE
 # ------------------------------------------------------------------------------
 # Create a Postgres table from the shoreline shapefile
-shapefile_shore = src.Shapefile_Download("shore").output
+shapefile_shore = src.database.Shapefile_Download("shore").output
 table_shore = src.Postgres_Table("shore")
 table_shore.create_table(filepath=shapefile_shore)
 
@@ -73,11 +73,10 @@ table_tss.reduce_table("objl", "!=", parameters["tss"])
 # ------------------------------------------------------------------------------
 # BUILD FERRY TERMINALS TABLE
 # ------------------------------------------------------------------------------
-# Create a Postgres table from the tss shapefile"
+# Create a Postgres table from the ferry terminals shapefile"
 shapefile_terminals = src.download.Shapefile_Download("ferry_terminals").output
 table_terminal = src.database.Postgres_Table("ferry_terminals", srid="ESRI:102749")
 table_terminal.create_table(filepath=shapefile_terminals)
-# table_terminal.reduce_table("owner", "!=", "WSF")
 
 # Transform to UTM 10 SRID
 table_terminal.project_column("geom", "POINT", srid)
@@ -87,11 +86,10 @@ table_terminal.add_index("idx_geom_terminal", "geom", gist=True)
 # ------------------------------------------------------------------------------
 # BUILD FERRY ROUTES TABLE
 # ------------------------------------------------------------------------------
-# Create a Postgres table from the tss shapefile"
+# Create a Postgres table from the ferry routes shapefile"
 shapefile_routes = src.download.Shapefile_Download("ferry_routes").output
 table_routes = src.database.Postgres_Table("ferry_routes", srid="ESRI:102749")
 table_routes.create_table(filepath=shapefile_routes)
-# table_routes.reduce_table("owner", "!=", "WSF")
 
 # Transform to UTM 10 SRID
 table_routes.project_column("geom", "MULTILINESTRING", srid)
@@ -124,26 +122,16 @@ table_points.add_terminal("ferry_terminals")
 
 
 # ------------------------------------------------------------------------------
-# BUILD TSS INTERACTIONS
-# ------------------------------------------------------------------------------
-table_tss_int = src.database.TSS_Intersection_Table("intersections_07", "points_07", "tss")
-table_tss_int.drop_table()
-table_tss_int.select_intersections()
-table_tss_int.add_direction()
-table_tss_int.get_tss_heading()
-table_tss_int.get_entrance_angle()
-table_tss_int.plot_angles()
-
-
-# ------------------------------------------------------------------------------
 # BUILD TRACKS TABLE
 # ------------------------------------------------------------------------------
 table_tracks = src.database.Tracks_Table("tracks_07")
 table_tracks.drop_table()
 table_tracks.convert_to_tracks("points_07")
 table_tracks.add_length()
+table_tracks.add_displacement()
 table_tracks.add_index("idx_period", "period", btree=True)
 table_tracks.add_od("points_07")
+
 
 # ------------------------------------------------------------------------------
 # BUILD CPA TABLE
@@ -152,8 +140,8 @@ table_cpa = src.database.CPA_Table("cpa_07", "tracks_07", "shore")
 table_cpa.drop_table()
 table_cpa.tracks_tracks()
 table_cpa.add_index("idx_cpa_distance", "cpa_distance")
-# Limit to 5NM
-table_cpa.reduce_table("cpa_distance", ">", 1852*5)
+# Limit to 4NM
+table_cpa.reduce_table("cpa_distance", ">", 1852*4)
 table_cpa.cpa_time()
 table_cpa.cpa_points()
 table_cpa.cpa_line()
@@ -164,46 +152,42 @@ table_cpa.add_index("idx_cpa_time", "cpa_time")
 
 
 # ------------------------------------------------------------------------------
-# BUILD UNIMPEDED TABLE
-# ------------------------------------------------------------------------------
-# table_unimpeded = src.database.Unimpeded_Table("unimpeded_07", "tracks_07", "cpa_07")
-# table_unimpeded.drop_table()
-# table_unimpeded.select_non_encounters()
-
-
-# ------------------------------------------------------------------------------
 # BUILD ENCOUNTERS TABLES
 # ------------------------------------------------------------------------------
 table_encounters = src.database.Encounters_Table("encounters_07", "points_07", "cpa_07")
 table_encounters.drop_table()
 table_encounters.cpa_points()
-table_encounters.mark_turning_spot()
 table_encounters.tcpa()
 table_encounters.dcpa()
 table_encounters.encounter_type()
 table_encounters.mark_ho_passing()
 table_encounters.give_way_info()
 table_encounters.mark_true()
+# table_encounters.tss_clearance("tss")
 
+table_encounters.plot_distance_type()
 table_encounters.plot_ship_domain(hue="target ship in TSS")
-table_encounters.plot_ship_domain(hue="target ship give way")
 
+table_encounters.plot_tss_clearance()
 table_encounters.drop_sparse_encounters()
 
-table_encounters.plot_alterations()
-table_encounters.plot_alteration_dcpa()
-table_encounters.head_on_table()
+table_encounters.plot_ferry()
 
-table_encounters.plot_crossings()
-table_encounters.plot_colreg_gw_manuevers()
-table_encounters.plot_first_move()
-table_encounters.plot_distance_type()
-table_encounters.plot_cpa_type()
-table_encounters.plot_domain_encounter()
+table_encounters.head_on_table()
 table = table_encounters.encounter_table()
-print(table)
-table_encounters.plot_encounters()
+
 model = table_encounters.regression()
 print(model.summary())
 ftests = table_encounters.hypotheses()
 
+
+# ------------------------------------------------------------------------------
+# BUILD TSS INTERACTIONS
+# ------------------------------------------------------------------------------
+table_tss_int = src.database.TSS_Intersection_Table("intersections_07", "points_07", "tss")
+table_tss_int.drop_table()
+table_tss_int.select_intersections()
+table_tss_int.add_direction()
+table_tss_int.get_tss_heading()
+table_tss_int.get_entrance_angle()
+table_tss_int.plot_angles()
