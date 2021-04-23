@@ -39,8 +39,7 @@ warnings.filterwarnings("ignore")
 
 PLOTS_DIR = abspath(join(dirname(__file__), "..", "reports", "figures", "7"))
 sns.set_palette("Set1")
-# sns.set_context("paper") 
-# sns.set(font_scale=1.25)  
+sns.set_context("paper", font_scale=1.75)  
 
 
 
@@ -751,6 +750,26 @@ class Tracks_Table(Postgres_Table):
         """
         self.run_query(sql)
 
+    def plot_tracks(self):
+        """
+        Plot count of in versus out of TSS by vessel type
+        """
+        df = self.table_dataframe()
+        LOGGER.info(f"Plotting tss from {self.table}")
+        fig, ax = plt.subplots()
+        sns.countplot("origin", data=df, palette="Paired")
+        sns.countplot("destination", data=df, palette="Paired")
+        ax.set_ylabel("Number of Tracks")
+        plt.xticks(rotation=45)
+        save_plot(join(PLOTS_DIR, "Terminals"), tight=True)
+        plt.close()
+
+        fig, ax = plt.subplots()
+        sns.boxplot(y="straightness", data=df, x="vesseltype", palette="Paired")
+        save_plot(join(PLOTS_DIR, "Straightness Index"), tight=True)
+        plt.close()
+        del df
+
 
 class CPA_Table(Postgres_Table):
 
@@ -1201,19 +1220,32 @@ class Encounters_Table(Postgres_Table):
 
     def head_on_table(self):
         df = self.df[(self.df["encounter"] == "head-on")]
-        df = df[df["head_on_passing"] == 'S']
-        df = df.drop_duplicates(subset=["cpa_distance", "cpa_time", "encounter"])
         df["pair1"] = df[['ownship', 'target ship']].agg('-'.join, axis=1)
         df["pair"] = np.where(df["pair1"] == "ferry-cargo", "cargo-ferry", df["pair1"])
-        sns.countplot(df["head_on_passing"], hue=df["pair"])
+        plt.close()
+        sns.countplot(df["head_on_passing"], hue=df["head_on_passing"])
         save_plot(join(PLOTS_DIR, f"Head On Encounters"), tight=True)
+        plt.close()
+       
+        df = df[df["head_on_passing"] == 'S']
+        df = df.drop_duplicates(subset=["cpa_distance", "cpa_time", "encounter"])
+        sns.countplot(df["head_on_passing"], hue=df["pair"])
+        save_plot(join(PLOTS_DIR, f"SS Head On Encounters"), tight=True)
         plt.close()
 
         non_ferry = df[df["pair"] != "ferry-ferry"]
         df["TSS"] = df["ownship in TSS"] + df["target ship in TSS"]
-        df["Split TSS"] = np.where(df["TSS"] == 1, 1 ,0)
+        df["Split TSS"] = np.where(df["TSS"] == 1, 1 ,0) 
         sns.countplot(df["Split TSS"], hue=df["pair"])
         save_plot(join(PLOTS_DIR, f"Head On Encounters Split TSS"), tight=True)
+        plt.close()
+
+        split = df[df['Split TSS'] == 1]
+        not_split = df[df['Split TSS'] == 0]
+        fig, ax = plt.subplots()
+        sns.distplot(split["cpa_distance"], hist=True, kde=False)
+        sns.distplot(not_split["cpa_distance"], hist=True, kde=False)
+        save_plot(join(PLOTS_DIR, f"Head On Encounters CPA (star-star)"), tight=True)
         plt.close()
 
     def _df_give_way(self, encounter=None, tss=None, vtype=None):
@@ -1337,10 +1369,8 @@ class Encounters_Table(Postgres_Table):
     def plot_ferry(self):
         """Plot length when encountering a ferry versus non-ferry"""
         df = self.df[(self.df['ownship'] == 'ferry')]
-        df = df[df['nearby_only'] == False]
         df = df[df['cpa_distance'] < 2*1852]
         df = df[((df['origin_1']=="Bainbridge Island") & (df['destination_1']=="Seattle Pier 50")) | ((df['origin_1']=="Seattle Pier 50") & (df['destination_1']=="Bainbridge Island"))]
-        # df = df[(df['origin_1'].isin(["Bremerton", "Seattle Pier 50"])) & (df['destination_1'].isin(["Bremerton", "Seattle Pier 50"]))]
         df['duration_1'] = df['duration_1']/ np.timedelta64(1, 'm')
        
         fig, ax = plt.subplots()
@@ -1351,7 +1381,7 @@ class Encounters_Table(Postgres_Table):
         save_plot(join(PLOTS_DIR, f"Spatial Distribution of Ferry Trips v Target Ship Type.png"), tight=False)
 
         fig, ax = plt.subplots()
-        sns.boxplot(y="alteration_1", x="target ship", hue="give_way_1", data=df, showfliers=False) 
+        sns.boxplot(y="alteration_1", x="target ship",  data=df, showfliers=False) 
         ax.set_ylabel("Alteration")
         ax.set_xlabel("Target Ship")
         ax.set_title(f"Alterations of Ferry Trips Between Bainbridge and Seattle v Target Ship Type")
@@ -1359,7 +1389,7 @@ class Encounters_Table(Postgres_Table):
         plt.close()
 
         fig, ax = plt.subplots()
-        sns.boxplot(y="acceleration_1", x="target ship", hue="give_way_1", data=df, showfliers=False)
+        sns.boxplot(y="acceleration_1", x="target ship",  data=df, showfliers=False)
         ax.set_ylabel("Acceleration")
         ax.set_xlabel("Target Ship")
         ax.set_title(f"Acceleration of Ferry Trips Between Bainbridge and Seattle v Target Ship Type")
@@ -1367,25 +1397,25 @@ class Encounters_Table(Postgres_Table):
         plt.close()
 
         fig, ax = plt.subplots()
-        sns.boxplot(y="sog_1", x="target ship", hue="give_way_1", data=df, showfliers=False)
+        sns.boxplot(y="sog_1", x="target ship",  data=df, showfliers=False)
         ax.set_ylabel("SOG")
         ax.set_xlabel("Target Ship")
         ax.set_title(f"SOG of Ferry Trips Between Bainbridge and Seattle v Target Ship Type")
         save_plot(join(PLOTS_DIR, f"SOG of Ferry Trips v Target Ship Type.png"), tight=False)
         plt.close()
 
+        # get single track for trip
+        df = df[df['tcpa'] == 0]
         fig, ax = plt.subplots()
-        sns.boxplot(y="duration_1", x="target ship", hue="give_way_1", data=df, showfliers=False)
+        sns.boxplot(y="duration_1", x="target ship",  data=df, showfliers=False)
         ax.set_ylabel("Duration")
         ax.set_xlabel("Target Ship")
         ax.set_title(f"Duration of Ferry Trips Between Bainbridge and Seattle v Target Ship Type")
         save_plot(join(PLOTS_DIR, f"Duration of Ferry Trips v Target Ship Type.png"), tight=False)
         plt.close()  
 
-        # get single track for trip
-        df.drop_duplicates(subset=["cpa_distance", "cpa_time", "encounter"], inplace=True)
         fig, ax = plt.subplots()
-        sns.boxplot(y="straight_1", x="target ship", hue="give_way_1", data=df)
+        sns.boxplot(y="straight_1", x="target ship",  data=df, showfliers=False)
         ax.set_ylabel("Straightness Index")
         ax.set_xlabel("Target Ship")
         ax.set_title(f"SI of Ferry Trips Between Bainbridge and Seattle v Target Ship Type")
@@ -1404,7 +1434,6 @@ class Encounters_Table(Postgres_Table):
     def plot_ship_domain(self, hue):
         """Plot CPA ship domain"""
         df = self.df[self.df['distance_12']<2*1852]
-        # df = df[(df['ownship'] != 'tanker') | df['target ship'] != 'tanker']
         df["target ship in TSS"] = df["target ship in TSS"].astype(int)
         df.rename(
             columns={
@@ -1425,7 +1454,7 @@ class Encounters_Table(Postgres_Table):
             gridspec_kws={"wspace": 1.0},
             height=6
         )
-        g.map(sns.scatterplot, "r", "distance_12", hue=df[hue], s=20, alpha=0.5)
+        g.map(sns.scatterplot, "r", "distance_12", hue=df[hue], s=10, alpha=0.8)
         
         # Set north to 0 degrees
         for axes in g.axes.flat:
@@ -1433,8 +1462,7 @@ class Encounters_Table(Postgres_Table):
             axes.set_theta_direction(-1)
             axes.title.set_position([0.5, 1.2])
             axes.yaxis.labelpad = 40
-
-        g.set_axis_labels("", "Distance")
+        
         plt.legend(loc='lower right', bbox_to_anchor=(0.1, -0.5), ncol=1)
         save_plot(join(PLOTS_DIR, f"Ship Domain by Vessel Types, {hue.title()}"), tight=False)
         plt.close()
@@ -1897,10 +1925,7 @@ class Encounters_Table(Postgres_Table):
 
         sns.boxplot(y=df["alteration_1"], x=df["head_on_passing"])
         save_plot(join(PLOTS_DIR, "Head On Alteration"), tight=False)
-        plt.close()
-
-
-        
+        plt.close()       
         
     def plot_crossings(self):
         for tss in [0,1]:

@@ -131,7 +131,7 @@ table_tracks.add_length()
 table_tracks.add_displacement()
 table_tracks.add_index("idx_period", "period", btree=True)
 table_tracks.add_od("points_07")
-
+table_tracks.plot_tracks()
 
 # ------------------------------------------------------------------------------
 # BUILD CPA TABLE
@@ -163,7 +163,7 @@ table_encounters.encounter_type()
 table_encounters.mark_ho_passing()
 table_encounters.give_way_info()
 table_encounters.mark_true()
-# table_encounters.tss_clearance("tss")
+table_encounters.tss_clearance("tss")
 
 table_encounters.plot_distance_type()
 table_encounters.plot_ship_domain(hue="target ship in TSS")
@@ -184,10 +184,10 @@ ftests = table_encounters.hypotheses()
 # ------------------------------------------------------------------------------
 # BUILD TSS INTERACTIONS
 # ------------------------------------------------------------------------------
-# table_tss_int = src.database.TSS_Intersection_Table("intersections_07", "points_07", "tss")
-# table_tss_int.drop_table()
-# table_tss_int.select_intersections()
-# table_tss_int.add_direction()
-# table_tss_int.get_tss_heading()
-# table_tss_int.get_entrance_angle()
-# table_tss_int.plot_angles()
+table_tss_int = src.database.TSS_Intersection_Table("intersections_07", "points_07", "tss")
+table_tss_int.drop_table()
+table_tss_int.select_intersections()
+table_tss_int.add_direction()
+table_tss_int.get_tss_heading()
+table_tss_int.get_entrance_angle()
+table_tss_int.plot_angles()
